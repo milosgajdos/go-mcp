@@ -34,10 +34,10 @@ const (
 	SubscribeRequestMethod                RequestMethod = "resources/subscribe"
 	UnsubscribeRequestMethod              RequestMethod = "resources/unsubscribe"
 	ReadResourceRequestMethod             RequestMethod = "resources/read"
+	ListRootsRequestMethod                RequestMethod = "roots/list"
 	CreateMessageRequestMethod            RequestMethod = "sampling/createMessage"
 	ListToolsRequestMethod                RequestMethod = "tools/list"
 	CallToolRequestMethod                 RequestMethod = "tools/call"
-	ListRootsRequestMethod                RequestMethod = "roots/list"
 )
 
 type Type string
@@ -47,8 +47,8 @@ const (
 	TextContentType       Type = "text"
 	ImageContentType      Type = "image"
 	EmbeddedResourceType  Type = "resource"
-	ResourceReferenceType Type = "ref/resource"
 	PromptReferenceType   Type = "ref/prompt"
+	ResourceReferenceType Type = "ref/resource"
 )
 
 // A progress token, used to associate progress
@@ -104,33 +104,6 @@ func (j *AnnotatedAnnotations) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("field %s: must be >= %v", "priority", 0)
 	}
 	*j = AnnotatedAnnotations(plain)
-	return nil
-}
-
-type BlobResourceContents struct {
-	ResourceContents
-	// A base64-encoded string representing the binary data of the item.
-	Blob string `json:"blob"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *BlobResourceContents) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["blob"]; raw != nil && !ok {
-		return fmt.Errorf("field blob in BlobResourceContents: required")
-	}
-	if _, ok := raw["uri"]; raw != nil && !ok {
-		return fmt.Errorf("field uri in BlobResourceContents: required")
-	}
-	type Plain BlobResourceContents
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = BlobResourceContents(plain)
 	return nil
 }
 
@@ -2728,6 +2701,33 @@ func (j *TextResourceContents) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*j = TextResourceContents(plain)
+	return nil
+}
+
+type BlobResourceContents struct {
+	ResourceContents
+	// A base64-encoded string representing the binary data of the item.
+	Blob string `json:"blob"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *BlobResourceContents) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["blob"]; raw != nil && !ok {
+		return fmt.Errorf("field blob in BlobResourceContents: required")
+	}
+	if _, ok := raw["uri"]; raw != nil && !ok {
+		return fmt.Errorf("field uri in BlobResourceContents: required")
+	}
+	type Plain BlobResourceContents
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = BlobResourceContents(plain)
 	return nil
 }
 
