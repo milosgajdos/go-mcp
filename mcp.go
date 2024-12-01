@@ -6,11 +6,6 @@ import (
 	"reflect"
 )
 
-const (
-	JSONRPCVersion = "2.0"
-	LatestVersion  = "2024-11-05"
-)
-
 type RequestMethod string
 
 const (
@@ -40,15 +35,27 @@ const (
 	CallToolRequestMethod                 RequestMethod = "tools/call"
 )
 
-type Type string
+type ReferenceType string
 
 const (
-	ObjectType            Type = "object"
-	TextContentType       Type = "text"
-	ImageContentType      Type = "image"
-	EmbeddedResourceType  Type = "resource"
-	PromptReferenceType   Type = "ref/prompt"
-	ResourceReferenceType Type = "ref/resource"
+	PromptReferenceType   ReferenceType = "ref/prompt"
+	ResourceReferenceType ReferenceType = "ref/resource"
+)
+
+type ContentType string
+
+const (
+	ObjectType           ContentType = "object"
+	TextContentType      ContentType = "text"
+	ImageContentType     ContentType = "image"
+	EmbeddedResourceType ContentType = "resource"
+)
+
+type ResourceContentType string
+
+const (
+	TextResourceContentsType ResourceContentType = "text"
+	BlobResourceContentsType ResourceContentType = "blob"
 )
 
 // A progress token, used to associate progress
@@ -166,6 +173,19 @@ func (j *CallToolRequest) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type CallToolResultContent interface {
+	CallToolResultContentType() ContentType
+}
+
+// DecodeCallToolResultContent attempts to Unmarshal CallToolResultContent from JSON and raturns it.
+func DecodeCallToolResultContent[T CallToolResultContent](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode CallToolResultContent: %w", err)
+	}
+	return msg, nil
+}
+
 // The server's response to a tool call.
 //
 // Any errors that originate from the tool SHOULD be reported inside the result
@@ -179,8 +199,8 @@ func (j *CallToolRequest) UnmarshalJSON(b []byte) error {
 type CallToolResult struct {
 	Result
 	// Content corresponds to the JSON schema field "content".
-	// TODO: make this type safe: TextContent | ImageContent | EmbeddedResource
-	Content []any `json:"content"`
+	// TextContent | ImageContent | EmbeddedResource
+	Content []CallToolResultContent `json:"content"`
 	// Whether the tool call ended in an error.
 	// If not set, this is assumed to be false (the call was successful).
 	IsError *bool `json:"isError,omitempty"`
@@ -244,7 +264,6 @@ func (j *CancelledNotificationParams) UnmarshalJSON(b []byte) error {
 // processing SHOULD cease.
 //
 // A client MUST NOT attempt to cancel its `initialize` request.
-// TODO: create a constructor so the Method is set to: CancelledNotificationMethod
 type CancelledNotification struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
@@ -329,10 +348,22 @@ func (j *CompleteRequestParamsArgument) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type CompleteRequestParamsRef interface {
+	CompleteRequestParamsRefType() ReferenceType
+}
+
+func DecodeCompleteRequestParamsRef[T CompleteRequestParamsRef](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode CompleteRequestParamsRef: %w", err)
+	}
+	return msg, nil
+}
+
 type CompleteRequestParams struct {
 	// Ref corresponds to the JSON schema field "ref".
-	// TODO: make this type safe: PromptReference | ResourceReference
-	Ref any `json:"ref"`
+	// PromptReference | ResourceReference
+	Ref CompleteRequestParamsRef `json:"ref"`
 	// The argument's information
 	Argument CompleteRequestParamsArgument `json:"argument"`
 }
@@ -603,16 +634,29 @@ func (j *CreateMessageResult) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type EmbeddedResourceContent interface {
+	EmbeddedResourceContentType() ResourceContentType
+}
+
+// DecodeCallToolResultContent attempts to Unmarshal CallToolResultContent from JSON and raturns it.
+func DecodeEmbeddedResourceContent[T EmbeddedResourceContent](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode EmbeddedResourceContent: %w", err)
+	}
+	return msg, nil
+}
+
 // The contents of a resource, embedded into a prompt or tool call result.
 // It is up to the client how best to render embedded resources for the benefit
 // of the LLM and/or the user.
 type EmbeddedResource struct {
 	Annotated
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ContentType `json:"type"`
 	// Resource corresponds to the JSON schema field "resource".
-	// TODO: make this type safe: TextResourceContents | BlobResourceContents
-	Resource any `json:"resource"`
+	// TextResourceContents | BlobResourceContents
+	Resource EmbeddedResourceContent `json:"resource"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -625,7 +669,7 @@ func (j *EmbeddedResource) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in EmbeddedResource: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != EmbeddedResourceType {
+	if strVal, ok := val.(string); !ok || ContentType(strVal) != EmbeddedResourceType {
 		return fmt.Errorf("invalid field type in EmbeddedResource: %v", strVal)
 	}
 	if _, ok := raw["resource"]; raw != nil && !ok {
@@ -638,6 +682,14 @@ func (j *EmbeddedResource) UnmarshalJSON(b []byte) error {
 	}
 	*j = EmbeddedResource(plain)
 	return nil
+}
+
+func (j EmbeddedResource) CallToolResultContentType() ContentType {
+	return EmbeddedResourceType
+}
+
+func (j EmbeddedResource) PromptMessageContentType() ContentType {
+	return EmbeddedResourceType
 }
 
 // Arguments to use for templating the prompt.
@@ -736,7 +788,7 @@ type ImageContent struct {
 	// types.
 	MimeType string `json:"mimeType"`
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ContentType `json:"type"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -755,7 +807,7 @@ func (j *ImageContent) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in ImageContent: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != ImageContentType {
+	if strVal, ok := val.(string); !ok || ContentType(strVal) != ImageContentType {
 		return fmt.Errorf("invalid field type in ImageContent: %v", strVal)
 	}
 	type Plain ImageContent
@@ -765,6 +817,18 @@ func (j *ImageContent) UnmarshalJSON(b []byte) error {
 	}
 	*j = ImageContent(plain)
 	return nil
+}
+
+func (j ImageContent) CallToolResultContentType() ContentType {
+	return ImageContentType
+}
+
+func (j ImageContent) PromptMessageContentType() ContentType {
+	return ImageContentType
+}
+
+func (j ImageContent) SamplingMessageContentType() ContentType {
+	return ImageContentType
 }
 
 // Describes the name and version of an MCP implementation.
@@ -918,7 +982,7 @@ type InitializedNotificationParams struct {
 	// additional metadata to their notifications.
 	Meta InitializedNotificationParamsMeta `json:"_meta,omitempty"`
 	// AdditionalProperties reserved for future use.
-	AdditionalProperties any `mapstructure:",remain"`
+	AdditionalProperties any `json:",omitempty"`
 }
 
 // This parameter name is reserved by MCP to allow clients and servers to attach
@@ -953,231 +1017,6 @@ func (j *InitializedNotification) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*j = InitializedNotification(plain)
-	return nil
-}
-
-type JSONRPCErrorCode int
-
-const (
-	JSONRPCParseError          JSONRPCErrorCode = -32700
-	JSONRPCInvalidRequestError JSONRPCErrorCode = -32600
-	JSONRPCMethodNotFoundError JSONRPCErrorCode = -32601
-	JSONRPCInvalidParamError   JSONRPCErrorCode = -32602
-	JSONRPCInternalError       JSONRPCErrorCode = -32603
-)
-
-type JSONRPCErrorMsg struct {
-	// The error type that occurred.
-	// TODO: make this (more) type safe.
-	Code JSONRPCErrorCode `json:"code"`
-	// Additional information about the error. The value of this member is defined by
-	// the sender (e.g. detailed error information, nested errors etc.).
-	Data any `json:"data,omitempty"`
-	// A short description of the error. The message SHOULD be limited to a concise
-	// single sentence.
-	Message string `json:"message"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCErrorMsg) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["code"]; raw != nil && !ok {
-		return fmt.Errorf("field code in JSONRPCErrorError: required")
-	}
-	if _, ok := raw["message"]; raw != nil && !ok {
-		return fmt.Errorf("field message in JSONRPCErrorError: required")
-	}
-	type Plain JSONRPCErrorMsg
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = JSONRPCErrorMsg(plain)
-	return nil
-}
-
-// A response to a request that indicates an error occurred.
-type JSONRPCError struct {
-	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
-	// Error corresponds to the JSON schema field "error".
-	Error JSONRPCErrorMsg `json:"error"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCError) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["error"]; raw != nil && !ok {
-		return fmt.Errorf("field error in JSONRPCError: required")
-	}
-	if _, ok := raw["id"]; raw != nil && !ok {
-		return fmt.Errorf("field id in JSONRPCError: required")
-	}
-	val, ok := raw["jsonrpc"]
-	if raw != nil && !ok {
-		return fmt.Errorf("field jsonrpc in JSONRPCRequest: required")
-	}
-	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
-		return fmt.Errorf("invalid jsonrpc in JSONRPCNotification: %v", val)
-	}
-	type Plain JSONRPCError
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = JSONRPCError(plain)
-	return nil
-}
-
-// TODO:
-type JSONRPCMessage any
-
-type JSONRPCNotificationParams struct {
-	// This parameter name is reserved by MCP to allow clients and servers to attach
-	// additional metadata to their notifications.
-	Meta JSONRPCNotificationParamsMeta `json:"_meta,omitempty"`
-	// AdditionalProperties are reserved for future use.
-	AdditionalProperties any
-}
-
-// A notification which does not expect a response.
-type JSONRPCNotification struct {
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
-	// Method corresponds to the JSON schema field "method".
-	Method string `json:"method"`
-	// Params corresponds to the JSON schema field "params".
-	Params *JSONRPCNotificationParams `json:"params,omitempty"`
-}
-
-// This parameter name is reserved by MCP to allow clients and servers to attach
-// additional metadata to their notifications.
-type JSONRPCNotificationParamsMeta map[string]any
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	val, ok := raw["jsonrpc"]
-	if raw != nil && !ok {
-		return fmt.Errorf("field jsonrpc in JSONRPCRequest: required")
-	}
-	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
-		return fmt.Errorf("invalid jsonrpc in JSONRPCNotification: %v", val)
-	}
-	if _, ok := raw["method"]; raw != nil && !ok {
-		return fmt.Errorf("field method in JSONRPCNotification: required")
-	}
-	type Plain JSONRPCNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = JSONRPCNotification(plain)
-	return nil
-}
-
-type JSONRPCRequestParams struct {
-	// Meta corresponds to the JSON schema field "_meta".
-	Meta *JSONRPCRequestParamsMeta `json:"_meta,omitempty"`
-	// AdditionalProperties are reserved for future use.
-	AdditionalProperties any
-}
-
-type JSONRPCRequestParamsMeta struct {
-	// If specified, the caller is requesting out-of-band progress notifications for
-	// this request (as represented by notifications/progress). The value of this
-	// parameter is an opaque token that will be attached to any subsequent
-	// notifications. The receiver is not obligated to provide these notifications.
-	ProgressToken *ProgressToken `json:"progressToken,omitempty"`
-}
-
-// A request that expects a response.
-type JSONRPCRequest struct {
-	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	// It must be set to JSONRPC version.
-	Jsonrpc string `json:"jsonrpc"`
-	// Method corresponds to the JSON schema field "method".
-	Method string `json:"method"`
-	// Params corresponds to the JSON schema field "params".
-	Params *JSONRPCRequestParams `json:"params,omitempty"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCRequest) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["id"]; raw != nil && !ok {
-		return fmt.Errorf("field id in JSONRPCRequest: required")
-	}
-	val, ok := raw["jsonrpc"]
-	if raw != nil && !ok {
-		return fmt.Errorf("field jsonrpc in JSONRPCRequest: required")
-	}
-	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
-		return fmt.Errorf("invalid jsonrpc in JSONRPCRequest: %v", val)
-	}
-	if _, ok := raw["method"]; raw != nil && !ok {
-		return fmt.Errorf("field method in JSONRPCRequest: required")
-	}
-	type Plain JSONRPCRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = JSONRPCRequest(plain)
-	return nil
-}
-
-// A successful (non-error) response to a request.
-type JSONRPCResponse struct {
-	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
-	// Result corresponds to the JSON schema field "result".
-	Result Result `json:"result"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCResponse) UnmarshalJSON(b []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["id"]; raw != nil && !ok {
-		return fmt.Errorf("field id in JSONRPCResponse: required")
-	}
-	val, ok := raw["jsonrpc"]
-	if raw != nil && !ok {
-		return fmt.Errorf("field jsonrpc in JSONRPCRequest: required")
-	}
-	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
-		return fmt.Errorf("invalid jsonrpc in JSONRPCResponse: %v", val)
-	}
-	if _, ok := raw["result"]; raw != nil && !ok {
-		return fmt.Errorf("field result in JSONRPCResponse: required")
-	}
-	type Plain JSONRPCResponse
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
-		return err
-	}
-	*j = JSONRPCResponse(plain)
 	return nil
 }
 
@@ -1655,7 +1494,7 @@ type NotificationParams struct {
 	// additional metadata to their notifications.
 	Meta NotificationParamsMeta `json:"_meta,omitempty"`
 	// AdditionalProperties for future use
-	AdditionalProperties any
+	AdditionalProperties any `json:",omitempty"`
 }
 
 type Notification struct {
@@ -1732,7 +1571,7 @@ type PingRequestParams struct {
 	// Meta corresponds to the JSON schema field "_meta".
 	Meta *PingRequestParamsMeta `json:"_meta,omitempty"`
 	// AdditionalProperties reserved for future use.
-	AdditionalProperties any
+	AdditionalProperties any `json:",omitempty"`
 }
 
 type PingRequestParamsMeta struct {
@@ -1925,13 +1764,25 @@ func (j *PromptListChangedNotification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type PromptMessageContent interface {
+	PromptMessageContentType() ContentType
+}
+
+func DecodePromptMessageContent[T PromptMessageContent](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode PromptMessageContent: %w", err)
+	}
+	return msg, nil
+}
+
 // Describes a message returned as part of a prompt.
 // This is similar to `SamplingMessage`, but also supports the embedding of
 // resources from the MCP server.
 type PromptMessage struct {
 	// Content corresponds to the JSON schema field "content".
-	// TODO: make this type sage: TextContent | ImageContent | EmbeddedResource
-	Content any `json:"content"`
+	// TextContent | ImageContent | EmbeddedResource
+	Content PromptMessageContent `json:"content"`
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 }
@@ -1960,7 +1811,7 @@ func (j *PromptMessage) UnmarshalJSON(b []byte) error {
 // Identifies a prompt.
 type PromptReference struct {
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ReferenceType `json:"type"`
 	// The name of the prompt or prompt template
 	Name string `json:"name"`
 }
@@ -1978,7 +1829,7 @@ func (j *PromptReference) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in PromptReference: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != PromptReferenceType {
+	if strVal, ok := val.(string); !ok || ReferenceType(strVal) != PromptReferenceType {
 		return fmt.Errorf("invalid field type in PromptReference: %v", strVal)
 	}
 	type Plain PromptReference
@@ -1988,6 +1839,10 @@ func (j *PromptReference) UnmarshalJSON(b []byte) error {
 	}
 	*j = PromptReference(plain)
 	return nil
+}
+
+func (j PromptReference) CompleteRequestParamsRefType() ReferenceType {
+	return j.Type
 }
 
 type ReadResourceRequestParams struct {
@@ -2045,12 +1900,24 @@ func (j *ReadResourceRequest) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type ReadResourceResultContent interface {
+	ReadResourceResultContentType() ContentType
+}
+
+func DecodeReadResourceResultContent[T ReadResourceResultContent](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode ReadResourceResultContent: %w", err)
+	}
+	return msg, nil
+}
+
 // The server's response to a resources/read request from the client.
 type ReadResourceResult struct {
 	Result
 	// Contents corresponds to the JSON schema field "contents".
-	// TODO: make this type safe TextResourceContents|BlobResourceContents
-	Contents []any `json:"contents"`
+	// TextResourceContents | BlobResourceContents
+	Contents []ReadResourceResultContent `json:"contents"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2090,7 +1957,7 @@ type RequestParams struct {
 	// Meta corresponds to the JSON schema field "_meta".
 	Meta *RequestParamsMeta `json:"_meta,omitempty"`
 	// AdditionalProperties are reserved for future use.
-	AdditionalProperties any
+	AdditionalProperties any `json:",omitempty"`
 }
 
 type RequestParamsMeta struct {
@@ -2203,7 +2070,7 @@ func (j *ResourceListChangedNotification) UnmarshalJSON(b []byte) error {
 // A reference to a resource or resource template definition.
 type ResourceReference struct {
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ReferenceType `json:"type"`
 	// The URI or URI template of the resource.
 	URI string `json:"uri"`
 }
@@ -2218,7 +2085,7 @@ func (j *ResourceReference) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in ResourceReference: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != ResourceReferenceType {
+	if strVal, ok := val.(string); !ok || ReferenceType(strVal) != ResourceReferenceType {
 		return fmt.Errorf("invalid field type in ResourceReference: %v", strVal)
 	}
 	if _, ok := raw["uri"]; raw != nil && !ok {
@@ -2231,6 +2098,10 @@ func (j *ResourceReference) UnmarshalJSON(b []byte) error {
 	}
 	*j = ResourceReference(plain)
 	return nil
+}
+
+func (j ResourceReference) CompleteRequestParamsRefType() ReferenceType {
+	return j.Type
 }
 
 // A template description for resources available on the server.
@@ -2355,7 +2226,7 @@ type Result struct {
 	// to attach additional metadata to their responses.
 	Meta ResultMeta `json:"_meta,omitempty"`
 	// AdditionalProperties are reserved for future use.
-	AdditionalProperties any
+	AdditionalProperties any `json:",omitempty"`
 }
 
 // This result property is reserved by the protocol to allow clients and servers to
@@ -2456,13 +2327,25 @@ func (j *RootsListChangedNotification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type SamplingMessageContent interface {
+	SamplingMessageContentType() ContentType
+}
+
+func DecodeSamplingMessageContent[T SamplingMessageContent](data []byte) (T, error) {
+	var msg T
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to decode SamplingMessageContent: %w", err)
+	}
+	return msg, nil
+}
+
 // Describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
-	// TODO: make this type safe: TextContent | ImageContent
-	Content any `json:"content"`
+	// TextContent | ImageContent
+	Content SamplingMessageContent `json:"content"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2648,7 +2531,7 @@ type TextContent struct {
 	// The text content of the message.
 	Text string `json:"text"`
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ContentType `json:"type"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2664,7 +2547,7 @@ func (j *TextContent) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in TextContent: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != TextContentType {
+	if strVal, ok := val.(string); !ok || ContentType(strVal) != TextContentType {
 		return fmt.Errorf("invalid field type in TextContent: %v", strVal)
 	}
 	type Plain TextContent
@@ -2674,6 +2557,18 @@ func (j *TextContent) UnmarshalJSON(b []byte) error {
 	}
 	*j = TextContent(plain)
 	return nil
+}
+
+func (j TextContent) CallToolResultContentType() ContentType {
+	return TextContentType
+}
+
+func (j TextContent) PromptMessageContentType() ContentType {
+	return TextContentType
+}
+
+func (j TextContent) SamplingMessageContentType() ContentType {
+	return TextContentType
 }
 
 type TextResourceContents struct {
@@ -2704,6 +2599,14 @@ func (j *TextResourceContents) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (j TextResourceContents) EmbeddedResourceContentType() ResourceContentType {
+	return TextResourceContentsType
+}
+
+func (j TextResourceContents) ReadResourceResultContentType() ResourceContentType {
+	return TextResourceContentsType
+}
+
 type BlobResourceContents struct {
 	ResourceContents
 	// A base64-encoded string representing the binary data of the item.
@@ -2731,10 +2634,18 @@ func (j *BlobResourceContents) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (j BlobResourceContents) EmbeddedResourceContentType() ResourceContentType {
+	return BlobResourceContentsType
+}
+
+func (j BlobResourceContents) ReadResourceResultContentType() ResourceContentType {
+	return BlobResourceContentsType
+}
+
 // A JSON Schema object defining the expected parameters for the tool.
 type ToolInputSchema struct {
 	// Type corresponds to the JSON schema field "type".
-	Type Type `json:"type"`
+	Type ContentType `json:"type"`
 	// Properties corresponds to the JSON schema field "properties".
 	Properties ToolInputSchemaProperties `json:"properties,omitempty"`
 }
@@ -2751,7 +2662,7 @@ func (j *ToolInputSchema) UnmarshalJSON(b []byte) error {
 	if raw != nil && !ok {
 		return fmt.Errorf("field type in ToolInputSchema: required")
 	}
-	if strVal, ok := val.(string); !ok || Type(strVal) != ObjectType {
+	if strVal, ok := val.(string); !ok || ContentType(strVal) != ObjectType {
 		return fmt.Errorf("invalid field type in ToolInputSchema: %v", strVal)
 	}
 	type Plain ToolInputSchema
