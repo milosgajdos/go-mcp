@@ -84,11 +84,6 @@ type JSONRPCNotification struct {
 	Jsonrpc string `json:"jsonrpc"`
 }
 
-// Implement JSONRPCMessage
-func (j JSONRPCNotification) MessageType() JSONRPCMessageType {
-	return JSONRPCNotificationMsgType
-}
-
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
@@ -114,6 +109,11 @@ func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Implement JSONRPCMessage
+func (j JSONRPCNotification) MessageType() JSONRPCMessageType {
+	return JSONRPCNotificationMsgType
+}
+
 // A successful (non-error) response to a request.
 type JSONRPCResponse struct {
 	// ID corresponds to the JSON schema field "id".
@@ -122,11 +122,6 @@ type JSONRPCResponse struct {
 	Jsonrpc string `json:"jsonrpc"`
 	// Result corresponds to the JSON schema field "result".
 	Result Result `json:"result"`
-}
-
-// Implement JSONRPCMessage
-func (j JSONRPCResponse) MessageType() JSONRPCMessageType {
-	return JSONRPCResponseMsgType
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -155,6 +150,11 @@ func (j *JSONRPCResponse) UnmarshalJSON(b []byte) error {
 	}
 	*j = JSONRPCResponse(plain)
 	return nil
+}
+
+// Implement JSONRPCMessage
+func (j JSONRPCResponse) MessageType() JSONRPCMessageType {
+	return JSONRPCResponseMsgType
 }
 
 type JSONRPCErrorCode int
