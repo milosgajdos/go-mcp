@@ -526,9 +526,9 @@ func (j *CreateMessageRequestParamsIncludeContext) UnmarshalJSON(b []byte) error
 // metadata is provider-specific.
 type CreateMessageRequestParamsMetadata map[string]any
 
-type CreateMessageRequestParams struct {
+type CreateMessageRequestParams[T SamplingMessageContent] struct {
 	// Messages corresponds to the JSON schema field "messages".
-	Messages []SamplingMessage `json:"messages"`
+	Messages []SamplingMessage[T] `json:"messages"`
 	// The server's preferences for which model to select. The client MAY ignore these
 	// preferences.
 	ModelPreferences *ModelPreferences `json:"modelPreferences,omitempty"`
@@ -551,7 +551,7 @@ type CreateMessageRequestParams struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequestParams) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -562,12 +562,12 @@ func (j *CreateMessageRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in CreateMessageRequestParams: required")
 	}
-	type Plain CreateMessageRequestParams
+	type Plain CreateMessageRequestParams[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CreateMessageRequestParams(plain)
+	*j = CreateMessageRequestParams[T](plain)
 	return nil
 }
 
@@ -575,14 +575,14 @@ func (j *CreateMessageRequestParams) UnmarshalJSON(b []byte) error {
 // discretion over which model to select. The client should also inform the user
 // before beginning sampling, to allow them to inspect the request (human in the
 // loop) and decide whether to approve it.
-type CreateMessageRequest[T Token] struct {
+type CreateMessageRequest[T Token, U SamplingMessageContent] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
-	Params CreateMessageRequestParams `json:"params"`
+	Params CreateMessageRequestParams[U] `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequest[T]) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequest[T, U]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -597,12 +597,12 @@ func (j *CreateMessageRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CreateMessageRequest: required")
 	}
-	type Plain CreateMessageRequest[T]
+	type Plain CreateMessageRequest[T, U]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CreateMessageRequest[T](plain)
+	*j = CreateMessageRequest[T, U](plain)
 	return nil
 }
 
@@ -610,9 +610,9 @@ func (j *CreateMessageRequest[T]) UnmarshalJSON(b []byte) error {
 // client should inform the user before returning the sampled message, to allow
 // them to inspect the response (human in the loop) and decide whether to allow the
 // server to see it.
-type CreateMessageResult struct {
+type CreateMessageResult[T SamplingMessageContent] struct {
 	Result
-	SamplingMessage
+	SamplingMessage[T]
 	// The name of the model that generated the message.
 	Model string `json:"model"`
 	// The reason why sampling stopped, if known.
@@ -620,7 +620,7 @@ type CreateMessageResult struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageResult) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -634,12 +634,12 @@ func (j *CreateMessageResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["role"]; raw != nil && !ok {
 		return fmt.Errorf("field role in CreateMessageResult: required")
 	}
-	type Plain CreateMessageResult
+	type Plain CreateMessageResult[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CreateMessageResult(plain)
+	*j = CreateMessageResult[T](plain)
 	return nil
 }
 
@@ -767,16 +767,16 @@ func (j *GetPromptRequest[T]) UnmarshalJSON(b []byte) error {
 }
 
 // The server's response to a prompts/get request from the client.
-type GetPromptResult struct {
+type GetPromptResult[T PromptMessageContent] struct {
 	Result
 	// An optional description for the prompt.
 	Description *string `json:"description,omitempty"`
 	// Messages corresponds to the JSON schema field "messages".
-	Messages []PromptMessage `json:"messages"`
+	Messages []PromptMessage[T] `json:"messages"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *GetPromptResult) UnmarshalJSON(b []byte) error {
+func (j *GetPromptResult[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -784,12 +784,12 @@ func (j *GetPromptResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in GetPromptResult: required")
 	}
-	type Plain GetPromptResult
+	type Plain GetPromptResult[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = GetPromptResult(plain)
+	*j = GetPromptResult[T](plain)
 	return nil
 }
 
@@ -1775,22 +1775,22 @@ func (j *PromptListChangedNotification) UnmarshalJSON(b []byte) error {
 }
 
 type PromptMessageContent interface {
-	PromptMessageContentType() ContentType
+	TextContent | ImageContent | EmbeddedResource
 }
 
 // Describes a message returned as part of a prompt.
 // This is similar to `SamplingMessage`, but also supports the embedding of
 // resources from the MCP server.
-type PromptMessage struct {
+type PromptMessage[T PromptMessageContent] struct {
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent | EmbeddedResource
-	Content PromptMessageContent `json:"content"`
+	Content T `json:"content"`
 }
 
-func (j *PromptMessage) UnmarshalJSON(b []byte) error {
-	type Alias PromptMessage
+func (j *PromptMessage[T]) UnmarshalJSON(b []byte) error {
+	type Alias PromptMessage[T]
 	aux := &struct {
 		Content json.RawMessage `json:"content"`
 		*Alias
@@ -1814,20 +1814,26 @@ func (j *PromptMessage) UnmarshalJSON(b []byte) error {
 	// Try each possible content type
 	var text TextContent
 	if err := json.Unmarshal(aux.Content, &text); err == nil {
-		j.Content = &text
-		return nil
+		if v, ok := any(&text).(T); ok {
+			j.Content = v
+			return nil
+		}
 	}
 
 	var image ImageContent
 	if err := json.Unmarshal(aux.Content, &image); err == nil {
-		j.Content = &image
-		return nil
+		if v, ok := any(&image).(T); ok {
+			j.Content = v
+			return nil
+		}
 	}
 
 	var embedded EmbeddedResource
 	if err := json.Unmarshal(aux.Content, &embedded); err == nil {
-		j.Content = &embedded
-		return nil
+		if v, ok := any(&embedded).(T); ok {
+			j.Content = v
+			return nil
+		}
 	}
 
 	return fmt.Errorf("content matches neither TextContent, ImageContent, nor EmbeddedResource")
@@ -2409,21 +2415,21 @@ func (j *RootsListChangedNotification) UnmarshalJSON(b []byte) error {
 }
 
 type SamplingMessageContent interface {
-	SamplingMessageContentType() ContentType
+	TextContent | ImageContent
 }
 
 // Describes a message issued to or received from an LLM API.
-type SamplingMessage struct {
+type SamplingMessage[T SamplingMessageContent] struct {
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent
-	Content SamplingMessageContent `json:"content"`
+	Content T `json:"content"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *SamplingMessage) UnmarshalJSON(b []byte) error {
-	type Alias SamplingMessage
+func (j *SamplingMessage[T]) UnmarshalJSON(b []byte) error {
+	type Alias SamplingMessage[T]
 	aux := &struct {
 		Content json.RawMessage `json:"content"`
 		*Alias
@@ -2447,14 +2453,18 @@ func (j *SamplingMessage) UnmarshalJSON(b []byte) error {
 	// Try each possible content type
 	var text TextContent
 	if err := json.Unmarshal(aux.Content, &text); err == nil {
-		j.Content = &text
-		return nil
+		if v, ok := any(&text).(T); ok {
+			j.Content = v
+			return nil
+		}
 	}
 
 	var image ImageContent
 	if err := json.Unmarshal(aux.Content, &image); err == nil {
-		j.Content = &image
-		return nil
+		if v, ok := any(&image).(T); ok {
+			j.Content = v
+			return nil
+		}
 	}
 
 	return fmt.Errorf("content matches neither TextContent nor ImageContent")
