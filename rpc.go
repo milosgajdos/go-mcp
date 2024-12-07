@@ -170,12 +170,12 @@ const (
 type JSONRPCErrorMsg struct {
 	// The error type that occurred.
 	Code JSONRPCErrorCode `json:"code"`
-	// Additional information about the error. The value of this member is defined by
-	// the sender (e.g. detailed error information, nested errors etc.).
-	Data any `json:"data,omitempty"`
 	// A short description of the error. The message SHOULD be limited to a concise
 	// single sentence.
 	Message string `json:"message"`
+	// Additional information about the error. The value of this member is defined by
+	// the sender (e.g. detailed error information, nested errors etc.).
+	Data any `json:"data,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -205,8 +205,8 @@ type JSONRPCError struct {
 	ID RequestID `json:"id"`
 	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
 	Jsonrpc string `json:"jsonrpc"`
-	// Error corresponds to the JSON schema field "error".
-	Error JSONRPCErrorMsg `json:"error"`
+	// Err corresponds to the JSON schema field "error".
+	Err JSONRPCErrorMsg `json:"error"`
 }
 
 // Implement JSONRPCMessage
@@ -240,4 +240,8 @@ func (j *JSONRPCError) UnmarshalJSON(b []byte) error {
 	}
 	*j = JSONRPCError(plain)
 	return nil
+}
+
+func (j JSONRPCError) Error() string {
+	return fmt.Sprintf("MCP error %d: %s", j.Err.Code, j.Err.Message)
 }
