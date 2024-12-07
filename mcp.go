@@ -143,8 +143,15 @@ func (j *CallToolRequest[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// NOTE: CallToolResultContent, because CallToolResultContent would
+// have to be generic and Go doesn't support nested generics, so
+// we are hacking around it by defining concrete types
+// for EmbeddedResources; this is a major hack, though so be warned!
+type TextEmbeddedResource = EmbeddedResource[TextResourceContents]
+type BlobEmbeddedResource = EmbeddedResource[BlobResourceContents]
+
 type CallToolResultContent interface {
-	CallToolResultContentType() ContentType
+	TextContent | ImageContent | TextEmbeddedResource | BlobEmbeddedResource
 }
 
 // The server's response to a tool call.
@@ -157,19 +164,19 @@ type CallToolResultContent interface {
 // However, any errors in _finding_ the tool, an error indicating that the
 // server does not support tool calls, or any other exceptional conditions,
 // should be reported as an MCP error response.
-type CallToolResult struct {
+type CallToolResult[T CallToolResultContent] struct {
 	Result
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent | EmbeddedResource
-	Content []CallToolResultContent `json:"content"`
+	Content []T `json:"content"`
 	// Whether the tool call ended in an error.
 	// If not set, this is assumed to be false (the call was successful).
 	IsError *bool `json:"isError,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CallToolResult) UnmarshalJSON(b []byte) error {
-	type Alias CallToolResult
+func (j *CallToolResult[T]) UnmarshalJSON(b []byte) error {
+	type Alias CallToolResult[T]
 	aux := &struct {
 		Content []json.RawMessage `json:"content"`
 		*Alias
@@ -185,24 +192,39 @@ func (j *CallToolResult) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("field content in CallToolResult: required")
 	}
 
-	j.Content = make([]CallToolResultContent, len(aux.Content))
+	j.Content = make([]T, len(aux.Content))
 	for i, raw := range aux.Content {
 		var text TextContent
 		if err := json.Unmarshal(raw, &text); err == nil {
-			j.Content[i] = &text
-			continue
+			if v, ok := any(&text).(T); ok {
+				j.Content[i] = v
+				continue
+			}
 		}
 
 		var image ImageContent
 		if err := json.Unmarshal(raw, &image); err == nil {
-			j.Content[i] = &image
-			continue
+			if v, ok := any(&image).(T); ok {
+				j.Content[i] = v
+				continue
+			}
 		}
 
-		var embedded EmbeddedResource
-		if err := json.Unmarshal(raw, &embedded); err == nil {
-			j.Content[i] = &embedded
-			continue
+		// Handle specialized EmbeddedResource types
+		var textResource TextEmbeddedResource
+		if err := json.Unmarshal(raw, &textResource); err == nil {
+			if v, ok := any(&textResource).(T); ok {
+				j.Content[i] = v
+				continue
+			}
+		}
+
+		var blobResource BlobEmbeddedResource
+		if err := json.Unmarshal(raw, &blobResource); err == nil {
+			if v, ok := any(&blobResource).(T); ok {
+				j.Content[i] = v
+				continue
+			}
 		}
 
 		return fmt.Errorf("content at index %d matches neither TextContent, ImageContent, nor EmbeddedResource", i)
@@ -351,28 +373,21 @@ const (
 	EmbeddedResourceType ContentType = "resource"
 )
 
-type ResourceContentType string
-
-const (
-	TextResourceContentsType ResourceContentType = "text"
-	BlobResourceContentsType ResourceContentType = "blob"
-)
-
 type CompleteRequestParamsRef interface {
-	CompleteRequestParamsRefType() ReferenceType
+	PromptReference | ResourceReference
 }
 
-type CompleteRequestParams struct {
+type CompleteRequestParams[T CompleteRequestParamsRef] struct {
 	// Ref corresponds to the JSON schema field "ref".
 	// PromptReference | ResourceReference
-	Ref CompleteRequestParamsRef `json:"ref"`
+	Ref T `json:"ref"`
 	// The argument's information
 	Argument CompleteRequestParamsArgument `json:"argument"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CompleteRequestParams) UnmarshalJSON(b []byte) error {
-	type Alias CompleteRequestParams
+func (j *CompleteRequestParams[T]) UnmarshalJSON(b []byte) error {
+	type Alias CompleteRequestParams[T]
 	aux := &struct {
 		Ref json.RawMessage `json:"ref"`
 		*Alias
@@ -391,28 +406,32 @@ func (j *CompleteRequestParams) UnmarshalJSON(b []byte) error {
 	// Try each possible ref type
 	var promptRef PromptReference
 	if err := json.Unmarshal(aux.Ref, &promptRef); err == nil {
-		j.Ref = &promptRef
-		return nil
+		if v, ok := any(&promptRef).(T); ok {
+			j.Ref = v
+			return nil
+		}
 	}
 
 	var resourceRef ResourceReference
 	if err := json.Unmarshal(aux.Ref, &resourceRef); err == nil {
-		j.Ref = &resourceRef
-		return nil
+		if v, ok := any(&resourceRef).(T); ok {
+			j.Ref = v
+			return nil
+		}
 	}
 
 	return fmt.Errorf("ref matches neither PromptReference nor ResourceReference")
 }
 
 // A request from the client to the server, to ask for completion options.
-type CompleteRequest[T Token] struct {
+type CompleteRequest[T Token, U CompleteRequestParamsRef] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
-	Params CompleteRequestParams `json:"params"`
+	Params CompleteRequestParams[U] `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CompleteRequest[T]) UnmarshalJSON(b []byte) error {
+func (j *CompleteRequest[T, U]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -427,12 +446,12 @@ func (j *CompleteRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CompleteRequest: required")
 	}
-	type Plain CompleteRequest[T]
+	type Plain CompleteRequest[T, U]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CompleteRequest[T](plain)
+	*j = CompleteRequest[T, U](plain)
 	return nil
 }
 
@@ -644,24 +663,24 @@ func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
 }
 
 type EmbeddedResourceContent interface {
-	EmbeddedResourceContentType() ResourceContentType
+	TextResourceContents | BlobResourceContents
 }
 
 // The contents of a resource, embedded into a prompt or tool call result.
 // It is up to the client how best to render embedded resources for the benefit
 // of the LLM and/or the user.
-type EmbeddedResource struct {
+type EmbeddedResource[T EmbeddedResourceContent] struct {
 	Annotated
 	// Type corresponds to the JSON schema field "type".
 	Type ContentType `json:"type"`
 	// Resource corresponds to the JSON schema field "resource".
 	// TextResourceContents | BlobResourceContents
-	Resource EmbeddedResourceContent `json:"resource"`
+	Resource T `json:"resource"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *EmbeddedResource) UnmarshalJSON(b []byte) error {
-	type Alias EmbeddedResource
+func (j *EmbeddedResource[T]) UnmarshalJSON(b []byte) error {
+	type Alias EmbeddedResource[T]
 	aux := &struct {
 		Resource json.RawMessage `json:"resource"`
 		*Alias
@@ -685,25 +704,21 @@ func (j *EmbeddedResource) UnmarshalJSON(b []byte) error {
 	// Try each possible resource type
 	var text TextResourceContents
 	if err := json.Unmarshal(aux.Resource, &text); err == nil {
-		j.Resource = &text
-		return nil
+		if v, ok := any(&text).(T); ok {
+			j.Resource = v
+			return nil
+		}
 	}
 
 	var blob BlobResourceContents
 	if err := json.Unmarshal(aux.Resource, &blob); err == nil {
-		j.Resource = &blob
-		return nil
+		if v, ok := any(&blob).(T); ok {
+			j.Resource = v
+			return nil
+		}
 	}
 
 	return fmt.Errorf("resource matches neither TextResourceContents nor BlobResourceContents")
-}
-
-func (j EmbeddedResource) CallToolResultContentType() ContentType {
-	return EmbeddedResourceType
-}
-
-func (j EmbeddedResource) PromptMessageContentType() ContentType {
-	return EmbeddedResourceType
 }
 
 // Arguments to use for templating the prompt.
@@ -831,18 +846,6 @@ func (j *ImageContent) UnmarshalJSON(b []byte) error {
 	}
 	*j = ImageContent(plain)
 	return nil
-}
-
-func (j ImageContent) CallToolResultContentType() ContentType {
-	return ImageContentType
-}
-
-func (j ImageContent) PromptMessageContentType() ContentType {
-	return ImageContentType
-}
-
-func (j ImageContent) SamplingMessageContentType() ContentType {
-	return ImageContentType
 }
 
 // Describes the name and version of an MCP implementation.
@@ -1775,7 +1778,7 @@ func (j *PromptListChangedNotification) UnmarshalJSON(b []byte) error {
 }
 
 type PromptMessageContent interface {
-	TextContent | ImageContent | EmbeddedResource
+	TextContent | ImageContent | TextEmbeddedResource | BlobEmbeddedResource
 }
 
 // Describes a message returned as part of a prompt.
@@ -1828,9 +1831,18 @@ func (j *PromptMessage[T]) UnmarshalJSON(b []byte) error {
 		}
 	}
 
-	var embedded EmbeddedResource
-	if err := json.Unmarshal(aux.Content, &embedded); err == nil {
-		if v, ok := any(&embedded).(T); ok {
+	// Handle specialized EmbeddedResource types
+	var textResource TextEmbeddedResource
+	if err := json.Unmarshal(aux.Content, &textResource); err == nil {
+		if v, ok := any(&textResource).(T); ok {
+			j.Content = v
+			return nil
+		}
+	}
+
+	var blobResource BlobEmbeddedResource
+	if err := json.Unmarshal(aux.Content, &blobResource); err == nil {
+		if v, ok := any(&blobResource).(T); ok {
 			j.Content = v
 			return nil
 		}
@@ -1870,10 +1882,6 @@ func (j *PromptReference) UnmarshalJSON(b []byte) error {
 	}
 	*j = PromptReference(plain)
 	return nil
-}
-
-func (j PromptReference) CompleteRequestParamsRefType() ReferenceType {
-	return j.Type
 }
 
 type ReadResourceRequestParams struct {
@@ -1932,20 +1940,20 @@ func (j *ReadResourceRequest[T]) UnmarshalJSON(b []byte) error {
 }
 
 type ReadResourceResultContent interface {
-	ReadResourceResultContentType() ResourceContentType
+	TextResourceContents | BlobResourceContents
 }
 
 // The server's response to a resources/read request from the client.
-type ReadResourceResult struct {
+type ReadResourceResult[T ReadResourceResultContent] struct {
 	Result
 	// Contents corresponds to the JSON schema field "contents".
 	// TextResourceContents | BlobResourceContents
-	Contents []ReadResourceResultContent `json:"contents"`
+	Contents []T `json:"contents"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ReadResourceResult) UnmarshalJSON(b []byte) error {
-	type Alias ReadResourceResult
+func (j *ReadResourceResult[T]) UnmarshalJSON(b []byte) error {
+	type Alias ReadResourceResult[T]
 	aux := &struct {
 		Contents []json.RawMessage `json:"contents"`
 		*Alias
@@ -1961,18 +1969,22 @@ func (j *ReadResourceResult) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("field contents in ReadResourceResult: required")
 	}
 
-	j.Contents = make([]ReadResourceResultContent, len(aux.Contents))
+	j.Contents = make([]T, len(aux.Contents))
 	for i, raw := range aux.Contents {
 		var text TextResourceContents
 		if err := json.Unmarshal(raw, &text); err == nil {
-			j.Contents[i] = &text
-			continue
+			if v, ok := any(&text).(T); ok {
+				j.Contents[i] = v
+				continue
+			}
 		}
 
 		var blob BlobResourceContents
 		if err := json.Unmarshal(raw, &blob); err == nil {
-			j.Contents[i] = &blob
-			continue
+			if v, ok := any(&blob).(T); ok {
+				j.Contents[i] = v
+				continue
+			}
 		}
 
 		return fmt.Errorf("content at index %d matches neither type", i)
@@ -2189,10 +2201,6 @@ func (j *ResourceReference) UnmarshalJSON(b []byte) error {
 	}
 	*j = ResourceReference(plain)
 	return nil
-}
-
-func (j ResourceReference) CompleteRequestParamsRefType() ReferenceType {
-	return j.Type
 }
 
 // A template description for resources available on the server.
@@ -2660,18 +2668,6 @@ func (j *TextContent) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (j TextContent) CallToolResultContentType() ContentType {
-	return TextContentType
-}
-
-func (j TextContent) PromptMessageContentType() ContentType {
-	return TextContentType
-}
-
-func (j TextContent) SamplingMessageContentType() ContentType {
-	return TextContentType
-}
-
 type TextResourceContents struct {
 	ResourceContents
 	// The text of the item. This must only be set if the item can actually be
@@ -2700,14 +2696,6 @@ func (j *TextResourceContents) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (j TextResourceContents) EmbeddedResourceContentType() ResourceContentType {
-	return TextResourceContentsType
-}
-
-func (j TextResourceContents) ReadResourceResultContentType() ResourceContentType {
-	return TextResourceContentsType
-}
-
 type BlobResourceContents struct {
 	ResourceContents
 	// A base64-encoded string representing the binary data of the item.
@@ -2733,14 +2721,6 @@ func (j *BlobResourceContents) UnmarshalJSON(b []byte) error {
 	}
 	*j = BlobResourceContents(plain)
 	return nil
-}
-
-func (j BlobResourceContents) EmbeddedResourceContentType() ResourceContentType {
-	return BlobResourceContentsType
-}
-
-func (j BlobResourceContents) ReadResourceResultContentType() ResourceContentType {
-	return BlobResourceContentsType
 }
 
 // A JSON Schema object defining the expected parameters for the tool.
