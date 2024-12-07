@@ -5,58 +5,43 @@ import (
 	"fmt"
 )
 
-type ReferenceType string
+// Simple constraint for string|number unions
+type StringOrNumber interface {
+	~string | ~int
+}
 
-const (
-	PromptReferenceType   ReferenceType = "ref/prompt"
-	ResourceReferenceType ReferenceType = "ref/resource"
-)
-
-type ContentType string
-
-const (
-	ObjectType           ContentType = "object"
-	TextContentType      ContentType = "text"
-	ImageContentType     ContentType = "image"
-	EmbeddedResourceType ContentType = "resource"
-)
-
-type ResourceContentType string
-
-const (
-	TextResourceContentsType ResourceContentType = "text"
-	BlobResourceContentsType ResourceContentType = "blob"
-)
+// Token is used as a generic constraint.
+// NOTE: this is mostly to make the semantics clearer
+// to the readers; the interface could be extended, too.
+type Token StringOrNumber
 
 // A progress token, used to associate progress
 // notifications with the original request.
-// Int | String
-// TODO: make this type safe; I hate Go doesnt have sum types
-type ProgressToken struct {
-	Value any `json:"-"`
+// NOTE we could also define a struct like this:
+//
+//	type UnionValue[T StringOrNumber] struct {
+//	    Value T
+//	}
+//
+// # And then then ProgressToken like so
+//
+// type ProgressToken = UnionValue[StringOrNumber]
+type ProgressToken[T StringOrNumber] struct {
+	Value T `json:"-"`
 }
 
 // MarshalJSON serializes the ProgressToken to JSON.
-// NOTE: there is no type check here.
-func (p ProgressToken) MarshalJSON() ([]byte, error) {
+func (p ProgressToken[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(p.Value)
 }
 
 // UnmarshalJSON deserializes the ProgressToken from JSON.
-func (p *ProgressToken) UnmarshalJSON(data []byte) error {
-	var v interface{}
+func (p *ProgressToken[T]) UnmarshalJSON(data []byte) error {
+	var v T
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal union value: %w", err)
 	}
-
-	switch v := v.(type) {
-	case float64:
-		p.Value = int(v)
-	case string:
-		p.Value = v
-	default:
-		return fmt.Errorf("unsupported progressToken type")
-	}
+	p.Value = v
 	return nil
 }
 
@@ -127,14 +112,14 @@ func (j *CallToolRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Used by the client to invoke a tool provided by the server.
-type CallToolRequest struct {
-	Request
+type CallToolRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CallToolRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CallToolRequest) UnmarshalJSON(b []byte) error {
+func (j *CallToolRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -149,26 +134,17 @@ func (j *CallToolRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CallToolRequest: required")
 	}
-	type Plain CallToolRequest
+	type Plain CallToolRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CallToolRequest(plain)
+	*j = CallToolRequest[T](plain)
 	return nil
 }
 
 type CallToolResultContent interface {
 	CallToolResultContentType() ContentType
-}
-
-// DecodeCallToolResultContent attempts to Unmarshal CallToolResultContent from JSON and raturns it.
-func DecodeCallToolResultContent[T CallToolResultContent](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode CallToolResultContent: %w", err)
-	}
-	return msg, nil
 }
 
 // The server's response to a tool call.
@@ -235,7 +211,7 @@ func (j *CallToolResult) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type CancelledNotificationParams struct {
+type CancelledNotificationParams[T ID] struct {
 	// An optional string describing the reason for the cancellation. This MAY be
 	// logged or presented to the user.
 	Reason *string `json:"reason,omitempty"`
@@ -243,11 +219,11 @@ type CancelledNotificationParams struct {
 	//
 	// This MUST correspond to the ID of a request previously issued in the same
 	// direction.
-	RequestID RequestID `json:"requestId"`
+	RequestID RequestID[T] `json:"requestId"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CancelledNotificationParams) UnmarshalJSON(b []byte) error {
+func (j *CancelledNotificationParams[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -255,12 +231,12 @@ func (j *CancelledNotificationParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["requestId"]; raw != nil && !ok {
 		return fmt.Errorf("field requestId in CancelledNotificationParams: required")
 	}
-	type Plain CancelledNotificationParams
+	type Plain CancelledNotificationParams[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CancelledNotificationParams(plain)
+	*j = CancelledNotificationParams[T](plain)
 	return nil
 }
 
@@ -275,15 +251,15 @@ func (j *CancelledNotificationParams) UnmarshalJSON(b []byte) error {
 // processing SHOULD cease.
 //
 // A client MUST NOT attempt to cancel its `initialize` request.
-type CancelledNotification struct {
+type CancelledNotification[T ID] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
-	Params CancelledNotificationParams `json:"params"`
+	Params CancelledNotificationParams[T] `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CancelledNotification) UnmarshalJSON(b []byte) error {
+func (j *CancelledNotification[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -298,12 +274,12 @@ func (j *CancelledNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CancelledNotification: required")
 	}
-	type Plain CancelledNotification
+	type Plain CancelledNotification[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CancelledNotification(plain)
+	*j = CancelledNotification[T](plain)
 	return nil
 }
 
@@ -359,16 +335,31 @@ func (j *CompleteRequestParamsArgument) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type ReferenceType string
+
+const (
+	PromptReferenceType   ReferenceType = "ref/prompt"
+	ResourceReferenceType ReferenceType = "ref/resource"
+)
+
+type ContentType string
+
+const (
+	ObjectType           ContentType = "object"
+	TextContentType      ContentType = "text"
+	ImageContentType     ContentType = "image"
+	EmbeddedResourceType ContentType = "resource"
+)
+
+type ResourceContentType string
+
+const (
+	TextResourceContentsType ResourceContentType = "text"
+	BlobResourceContentsType ResourceContentType = "blob"
+)
+
 type CompleteRequestParamsRef interface {
 	CompleteRequestParamsRefType() ReferenceType
-}
-
-func DecodeCompleteRequestParamsRef[T CompleteRequestParamsRef](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode CompleteRequestParamsRef: %w", err)
-	}
-	return msg, nil
 }
 
 type CompleteRequestParams struct {
@@ -414,14 +405,14 @@ func (j *CompleteRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // A request from the client to the server, to ask for completion options.
-type CompleteRequest struct {
-	Request
+type CompleteRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CompleteRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CompleteRequest) UnmarshalJSON(b []byte) error {
+func (j *CompleteRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -436,12 +427,12 @@ func (j *CompleteRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CompleteRequest: required")
 	}
-	type Plain CompleteRequest
+	type Plain CompleteRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CompleteRequest(plain)
+	*j = CompleteRequest[T](plain)
 	return nil
 }
 
@@ -584,14 +575,14 @@ func (j *CreateMessageRequestParams) UnmarshalJSON(b []byte) error {
 // discretion over which model to select. The client should also inform the user
 // before beginning sampling, to allow them to inspect the request (human in the
 // loop) and decide whether to approve it.
-type CreateMessageRequest struct {
-	Request
+type CreateMessageRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CreateMessageRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequest) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -606,12 +597,12 @@ func (j *CreateMessageRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CreateMessageRequest: required")
 	}
-	type Plain CreateMessageRequest
+	type Plain CreateMessageRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = CreateMessageRequest(plain)
+	*j = CreateMessageRequest[T](plain)
 	return nil
 }
 
@@ -654,15 +645,6 @@ func (j *CreateMessageResult) UnmarshalJSON(b []byte) error {
 
 type EmbeddedResourceContent interface {
 	EmbeddedResourceContentType() ResourceContentType
-}
-
-// DecodeCallToolResultContent attempts to Unmarshal CallToolResultContent from JSON and raturns it.
-func DecodeEmbeddedResourceContent[T EmbeddedResourceContent](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode EmbeddedResourceContent: %w", err)
-	}
-	return msg, nil
 }
 
 // The contents of a resource, embedded into a prompt or tool call result.
@@ -753,14 +735,14 @@ func (j *GetPromptRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Used by the client to get a prompt provided by the server.
-type GetPromptRequest struct {
-	Request
+type GetPromptRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params GetPromptRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *GetPromptRequest) UnmarshalJSON(b []byte) error {
+func (j *GetPromptRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -775,12 +757,12 @@ func (j *GetPromptRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in GetPromptRequest: required")
 	}
-	type Plain GetPromptRequest
+	type Plain GetPromptRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = GetPromptRequest(plain)
+	*j = GetPromptRequest[T](plain)
 	return nil
 }
 
@@ -1219,12 +1201,12 @@ func (j *ListResourcesResult) UnmarshalJSON(b []byte) error {
 // system
 // structure or access specific locations that the client has permission to read
 // from.
-type ListRootsRequest struct {
-	Request
+type ListRootsRequest[T Token] struct {
+	Request[T]
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ListRootsRequest) UnmarshalJSON(b []byte) error {
+func (j *ListRootsRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1236,12 +1218,12 @@ func (j *ListRootsRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListRootsRequestMethod {
 		return fmt.Errorf("invalid field method in ListRootsRequest: %v", strVal)
 	}
-	type Plain ListRootsRequest
+	type Plain ListRootsRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = ListRootsRequest(plain)
+	*j = ListRootsRequest[T](plain)
 	return nil
 }
 
@@ -1595,32 +1577,32 @@ type PaginatedResult struct {
 // attach additional metadata to their responses.
 type PaginatedResultMeta map[string]any
 
-type PingRequestParams struct {
+type PingRequestParams[T Token] struct {
 	// Meta corresponds to the JSON schema field "_meta".
-	Meta *PingRequestParamsMeta `json:"_meta,omitempty"`
+	Meta *PingRequestParamsMeta[T] `json:"_meta,omitempty"`
 	// AdditionalProperties reserved for future use.
 	AdditionalProperties any `json:",omitempty"`
 }
 
-type PingRequestParamsMeta struct {
+type PingRequestParamsMeta[T Token] struct {
 	// If specified, the caller is requesting out-of-band progress notifications for
 	// this request (as represented by notifications/progress). The value of this
 	// parameter is an opaque token that will be attached to any subsequent
 	// notifications. The receiver is not obligated to provide these notifications.
-	ProgressToken *ProgressToken `json:"progressToken,omitempty"`
+	ProgressToken *ProgressToken[T] `json:"progressToken,omitempty"`
 }
 
 // A ping, issued by either the server or the client, to check that the other party
 // is still alive. The receiver must promptly respond, or else may be disconnected.
-type PingRequest struct {
+type PingRequest[T Token] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
-	Params *PingRequestParams `json:"params,omitempty"`
+	Params *PingRequestParams[T] `json:"params,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *PingRequest) UnmarshalJSON(b []byte) error {
+func (j *PingRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1632,28 +1614,28 @@ func (j *PingRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != PingRequestMethod {
 		return fmt.Errorf("invalid field method in PingRequest: %v", strVal)
 	}
-	type Plain PingRequest
+	type Plain PingRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = PingRequest(plain)
+	*j = PingRequest[T](plain)
 	return nil
 }
 
-type ProgressNotificationParams struct {
+type ProgressNotificationParams[T Token] struct {
 	// The progress thus far. This should increase every time progress is made, even
 	// if the total is unknown.
 	Progress float64 `json:"progress"`
 	// The progress token which was given in the initial request, used to associate
 	// this notification with the request that is proceeding.
-	ProgressToken ProgressToken `json:"progressToken"`
+	ProgressToken ProgressToken[T] `json:"progressToken"`
 	// Total number of items to process (or total progress required), if known.
 	Total *int64 `json:"total,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ProgressNotificationParams) UnmarshalJSON(b []byte) error {
+func (j *ProgressNotificationParams[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1664,26 +1646,26 @@ func (j *ProgressNotificationParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["progressToken"]; raw != nil && !ok {
 		return fmt.Errorf("field progressToken in ProgressNotificationParams: required")
 	}
-	type Plain ProgressNotificationParams
+	type Plain ProgressNotificationParams[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = ProgressNotificationParams(plain)
+	*j = ProgressNotificationParams[T](plain)
 	return nil
 }
 
 // An out-of-band notification used to inform the receiver of a progress update for
 // a long-running request.
-type ProgressNotification struct {
+type ProgressNotification[T Token] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
-	Params ProgressNotificationParams `json:"params"`
+	Params ProgressNotificationParams[T] `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ProgressNotification) UnmarshalJSON(b []byte) error {
+func (j *ProgressNotification[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1698,12 +1680,12 @@ func (j *ProgressNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ProgressNotification: required")
 	}
-	type Plain ProgressNotification
+	type Plain ProgressNotification[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = ProgressNotification(plain)
+	*j = ProgressNotification[T](plain)
 	return nil
 }
 
@@ -1796,23 +1778,15 @@ type PromptMessageContent interface {
 	PromptMessageContentType() ContentType
 }
 
-func DecodePromptMessageContent[T PromptMessageContent](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode PromptMessageContent: %w", err)
-	}
-	return msg, nil
-}
-
 // Describes a message returned as part of a prompt.
 // This is similar to `SamplingMessage`, but also supports the embedding of
 // resources from the MCP server.
 type PromptMessage struct {
+	// Role corresponds to the JSON schema field "role".
+	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent | EmbeddedResource
 	Content PromptMessageContent `json:"content"`
-	// Role corresponds to the JSON schema field "role".
-	Role Role `json:"role"`
 }
 
 func (j *PromptMessage) UnmarshalJSON(b []byte) error {
@@ -1921,13 +1895,13 @@ func (j *ReadResourceRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Sent from the client to the server, to read a specific resource URI.
-type ReadResourceRequest struct {
-	Request
+type ReadResourceRequest[T Token] struct {
+	Request[T]
 	Params *ReadResourceRequestParams `json:"params,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ReadResourceRequest) UnmarshalJSON(b []byte) error {
+func (j *ReadResourceRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1942,25 +1916,17 @@ func (j *ReadResourceRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ReadResourceRequest: required")
 	}
-	type Plain ReadResourceRequest
+	type Plain ReadResourceRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = ReadResourceRequest(plain)
+	*j = ReadResourceRequest[T](plain)
 	return nil
 }
 
 type ReadResourceResultContent interface {
 	ReadResourceResultContentType() ResourceContentType
-}
-
-func DecodeReadResourceResultContent[T ReadResourceResultContent](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode ReadResourceResultContent: %w", err)
-	}
-	return msg, nil
 }
 
 // The server's response to a resources/read request from the client.
@@ -2038,62 +2004,64 @@ const (
 	CallToolRequestMethod                 RequestMethod = "tools/call"
 )
 
+// ID is used as a generic constraint.
+// NOTE: this is mostly to make the semantics clearer
+// to the code readers; the interface could be extended, too.
+type ID StringOrNumber
+
 // RequestID is a uniquely identifying ID for a request in JSON-RPC.
-// I hate that Go does not have sum types.
-// Int | String
-// TODO: make this type safe; I hate Go doesnt have sum types
-type RequestID struct {
-	Value any `json:"-"`
+// NOTE we could also define a struct like this:
+//
+//	type UnionValue[T StringOrNumber] struct {
+//	    Value T
+//	}
+//
+// # And then then ProgressToken like so
+//
+// type RequestID = UnionValue[StringOrNumber]
+type RequestID[T StringOrNumber] struct {
+	Value T `json:"-"`
 }
 
 // MarshalJSON marshals RequestID.
-// NOTE: there is no type check here.
-func (r RequestID) MarshalJSON() ([]byte, error) {
+func (r RequestID[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.Value)
 }
 
 // UnmarshalJSON deserializes the RequestID from JSON.
-func (r *RequestID) UnmarshalJSON(data []byte) error {
-	var v interface{}
+func (r *RequestID[T]) UnmarshalJSON(data []byte) error {
+	var v T
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal union value: %w", err)
 	}
-
-	switch v := v.(type) {
-	case float64:
-		r.Value = int(v)
-	case string:
-		r.Value = v
-	default:
-		return fmt.Errorf("unsupported progressToken type")
-	}
+	r.Value = v
 	return nil
 }
 
-type RequestParams struct {
+type RequestParams[T Token] struct {
 	// Meta corresponds to the JSON schema field "_meta".
-	Meta *RequestParamsMeta `json:"_meta,omitempty"`
+	Meta *RequestParamsMeta[T] `json:"_meta,omitempty"`
 	// AdditionalProperties are reserved for future use.
 	AdditionalProperties any `json:",omitempty"`
 }
 
-type RequestParamsMeta struct {
+type RequestParamsMeta[T Token] struct {
 	// If specified, the caller is requesting out-of-band progress notifications for
 	// this request (as represented by notifications/progress). The value of this
 	// parameter is an opaque token that will be attached to any subsequent
 	// notifications. The receiver is not obligated to provide these notifications.
-	ProgressToken *ProgressToken `json:"progressToken,omitempty"`
+	ProgressToken *ProgressToken[T] `json:"progressToken,omitempty"`
 }
 
-type Request struct {
+type Request[T Token] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
-	Params *RequestParams `json:"params,omitempty"`
+	Params *RequestParams[T] `json:"params,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *Request) UnmarshalJSON(b []byte) error {
+func (j *Request[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -2101,12 +2069,12 @@ func (j *Request) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in Request: required")
 	}
-	type Plain Request
+	type Plain Request[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = Request(plain)
+	*j = Request[T](plain)
 	return nil
 }
 
@@ -2444,14 +2412,6 @@ type SamplingMessageContent interface {
 	SamplingMessageContentType() ContentType
 }
 
-func DecodeSamplingMessageContent[T SamplingMessageContent](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode SamplingMessageContent: %w", err)
-	}
-	return msg, nil
-}
-
 // Describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
 	// Role corresponds to the JSON schema field "role".
@@ -2568,14 +2528,14 @@ func (j *SetLevelRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // A request from the client to the server, to enable or adjust logging.
-type SetLevelRequest struct {
-	Request
+type SetLevelRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params SetLevelRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *SetLevelRequest) UnmarshalJSON(b []byte) error {
+func (j *SetLevelRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -2590,12 +2550,12 @@ func (j *SetLevelRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in SetLevelRequest: required")
 	}
-	type Plain SetLevelRequest
+	type Plain SetLevelRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = SetLevelRequest(plain)
+	*j = SetLevelRequest[T](plain)
 	return nil
 }
 
@@ -2625,14 +2585,14 @@ func (j *SubscribeRequestParams) UnmarshalJSON(b []byte) error {
 
 // Sent from the client to request resources/updated notifications from the server
 // whenever a particular resource changes.
-type SubscribeRequest struct {
-	Request
+type SubscribeRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params SubscribeRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *SubscribeRequest) UnmarshalJSON(b []byte) error {
+func (j *SubscribeRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -2647,12 +2607,12 @@ func (j *SubscribeRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in SubscribeRequest: required")
 	}
-	type Plain SubscribeRequest
+	type Plain SubscribeRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = SubscribeRequest(plain)
+	*j = SubscribeRequest[T](plain)
 	return nil
 }
 
@@ -2890,14 +2850,14 @@ func (j *UnsubscribeRequestParams) UnmarshalJSON(b []byte) error {
 
 // Sent from the client to request cancellation of resources/updated notifications
 // from the server. This should follow a previous resources/subscribe request.
-type UnsubscribeRequest struct {
-	Request
+type UnsubscribeRequest[T Token] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params UnsubscribeRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *UnsubscribeRequest) UnmarshalJSON(b []byte) error {
+func (j *UnsubscribeRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -2912,11 +2872,11 @@ func (j *UnsubscribeRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in UnsubscribeRequest: required")
 	}
-	type Plain UnsubscribeRequest
+	type Plain UnsubscribeRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = UnsubscribeRequest(plain)
+	*j = UnsubscribeRequest[T](plain)
 	return nil
 }

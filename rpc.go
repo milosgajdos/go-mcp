@@ -25,32 +25,23 @@ type JSONRPCMessage interface {
 	MessageType() JSONRPCMessageType
 }
 
-// DecodeJSONRPCMessage attempts to Unmarshal JSONRPCMessage from JSON and raturns it.
-func DecodeJSONRPCMessage[T JSONRPCMessage](data []byte) (T, error) {
-	var msg T
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, fmt.Errorf("failed to decode JSONRPCMessage: %w", err)
-	}
-	return msg, nil
-}
-
 // A request that expects a response.
-type JSONRPCRequest struct {
-	Request
+type JSONRPCRequest[T Token, U ID] struct {
+	Request[T]
 	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
+	ID RequestID[U] `json:"id"`
 	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
 	// It must be set to JSONRPCVersion
 	Jsonrpc string `json:"jsonrpc"`
 }
 
 // Implement JSONRPCMessage
-func (j JSONRPCRequest) MessageType() JSONRPCMessageType {
+func (j JSONRPCRequest[T, U]) MessageType() JSONRPCMessageType {
 	return JSONRPCRequestMsgType
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCRequest) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCRequest[T, U]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -68,12 +59,12 @@ func (j *JSONRPCRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCRequest: required")
 	}
-	type Plain JSONRPCRequest
+	type Plain JSONRPCRequest[T, U]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = JSONRPCRequest(plain)
+	*j = JSONRPCRequest[T, U](plain)
 	return nil
 }
 
@@ -115,9 +106,9 @@ func (j JSONRPCNotification) MessageType() JSONRPCMessageType {
 }
 
 // A successful (non-error) response to a request.
-type JSONRPCResponse struct {
+type JSONRPCResponse[T ID] struct {
 	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
+	ID RequestID[T] `json:"id"`
 	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
 	Jsonrpc string `json:"jsonrpc"`
 	// Result corresponds to the JSON schema field "result".
@@ -125,7 +116,7 @@ type JSONRPCResponse struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCResponse) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -143,17 +134,17 @@ func (j *JSONRPCResponse) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["result"]; raw != nil && !ok {
 		return fmt.Errorf("field result in JSONRPCResponse: required")
 	}
-	type Plain JSONRPCResponse
+	type Plain JSONRPCResponse[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = JSONRPCResponse(plain)
+	*j = JSONRPCResponse[T](plain)
 	return nil
 }
 
 // Implement JSONRPCMessage
-func (j JSONRPCResponse) MessageType() JSONRPCMessageType {
+func (j JSONRPCResponse[T]) MessageType() JSONRPCMessageType {
 	return JSONRPCResponseMsgType
 }
 
@@ -200,9 +191,9 @@ func (j *JSONRPCErrorMsg) UnmarshalJSON(b []byte) error {
 }
 
 // A response to a request that indicates an error occurred.
-type JSONRPCError struct {
+type JSONRPCError[T ID] struct {
 	// ID corresponds to the JSON schema field "id".
-	ID RequestID `json:"id"`
+	ID RequestID[T] `json:"id"`
 	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
 	Jsonrpc string `json:"jsonrpc"`
 	// Err corresponds to the JSON schema field "error".
@@ -210,12 +201,12 @@ type JSONRPCError struct {
 }
 
 // Implement JSONRPCMessage
-func (j JSONRPCError) MessageType() JSONRPCMessageType {
+func (j JSONRPCError[T]) MessageType() JSONRPCMessageType {
 	return JSONRPCErrorMsgType
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCError) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCError[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -233,15 +224,15 @@ func (j *JSONRPCError) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
 		return fmt.Errorf("invalid jsonrpc in JSONRPCNotification: %v", val)
 	}
-	type Plain JSONRPCError
+	type Plain JSONRPCError[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = JSONRPCError(plain)
+	*j = JSONRPCError[T](plain)
 	return nil
 }
 
-func (j JSONRPCError) Error() string {
+func (j JSONRPCError[T]) Error() string {
 	return fmt.Sprintf("MCP error %d: %s", j.Err.Code, j.Err.Message)
 }
