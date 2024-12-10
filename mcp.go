@@ -243,9 +243,12 @@ type StringOrNumber interface {
 }
 
 // Token is used as a generic constraint.
-// NOTE: this is mostly to make the semantics clearer
-// to the readers; the interface could be extended, too.
-type Token StringOrNumber
+// NOTE: this is mostly to make the semantics clearer as well
+// as adding the comparable constraints so we can use Tokens as map keys.
+type Token interface {
+	StringOrNumber
+	comparable
+}
 
 // A progress token, used to associate progress
 // notifications with the original request.
@@ -2255,9 +2258,12 @@ const (
 )
 
 // ID is used as a generic constraint.
-// NOTE: this is mostly to make the semantics clearer
-// to the code readers; the interface could be extended, too.
-type ID StringOrNumber
+// NOTE: this is mostly to make the semantics clearer as well
+// as adding the comparable constraints so we can use IDs as map keys.
+type ID interface {
+	StringOrNumber
+	comparable
+}
 
 // RequestID is a uniquely identifying ID for a request in JSON-RPC.
 // NOTE we could also define a struct like this:
