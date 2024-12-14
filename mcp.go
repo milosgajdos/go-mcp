@@ -237,31 +237,17 @@ func (j JSONRPCError[T]) Error() string {
 	return fmt.Sprintf("MCP error %d: %s", j.Err.Code, j.Err.Message)
 }
 
-// Simple constraint for string|number unions
-type StringOrNumber interface {
-	~string | ~int
-}
-
 // Token is used as a generic constraint.
 // NOTE: this is mostly to make the semantics clearer as well
 // as adding the comparable constraints so we can use Tokens as map keys.
 type Token interface {
-	StringOrNumber
-	comparable
+	~uint64
 }
 
 // A progress token, used to associate progress
-// notifications with the original request.
-// NOTE we could also define a struct like this:
-//
-//	type UnionValue[T StringOrNumber] struct {
-//	    Value T
-//	}
-//
-// # And then then ProgressToken like so
-//
-// type ProgressToken = UnionValue[StringOrNumber]
-type ProgressToken[T StringOrNumber] struct {
+// NOTE: ProgressToken is defined in the spec as string | number
+// But Go type system is very sad, so we are sticking with uint64 for now.
+type ProgressToken[T Token] struct {
 	Value T `json:"-"`
 }
 
@@ -2261,21 +2247,13 @@ const (
 // NOTE: this is mostly to make the semantics clearer as well
 // as adding the comparable constraints so we can use IDs as map keys.
 type ID interface {
-	StringOrNumber
-	comparable
+	~uint64
 }
 
 // RequestID is a uniquely identifying ID for a request in JSON-RPC.
-// NOTE we could also define a struct like this:
-//
-//	type UnionValue[T StringOrNumber] struct {
-//	    Value T
-//	}
-//
-// # And then then ProgressToken like so
-//
-// type RequestID = UnionValue[StringOrNumber]
-type RequestID[T StringOrNumber] struct {
+// NOTE: RequestID is defined in the spec as string | number
+// But Go type system is very sad, so we are sticking with uint64 for now.
+type RequestID[T ID] struct {
 	Value T `json:"-"`
 }
 
