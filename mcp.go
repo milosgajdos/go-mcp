@@ -19,29 +19,28 @@ const (
 	JSONRPCErrorMsgType        JSONRPCMessageType = "error"
 )
 
-// JSONRPCMessage is the interface for all JSON-RPC message types.
-// JSONRPCRequest | JSONRPCNotification | JSONRPCResponse | JSONRPCError
-type JSONRPCMessage interface {
+// JSONRPCMessageTyper is the interface for all JSON-RPC message types.
+type JSONRPCMessageTyper interface {
 	MessageType() JSONRPCMessageType
 }
 
 // A request that expects a response.
-type JSONRPCRequest[T Token, U ID] struct {
+type JSONRPCRequest[T ID] struct {
 	Request[T]
 	// ID corresponds to the JSON schema field "id".
-	ID RequestID[U] `json:"id"`
+	ID RequestID[T] `json:"id"`
 	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
 	// It must be set to JSONRPCVersion
 	Jsonrpc string `json:"jsonrpc"`
 }
 
 // Implement JSONRPCMessage
-func (j JSONRPCRequest[T, U]) MessageType() JSONRPCMessageType {
+func (j JSONRPCRequest[T]) MessageType() JSONRPCMessageType {
 	return JSONRPCRequestMsgType
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCRequest[T, U]) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -59,12 +58,12 @@ func (j *JSONRPCRequest[T, U]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCRequest: required")
 	}
-	type Plain JSONRPCRequest[T, U]
+	type Plain JSONRPCRequest[T]
 	var plain Plain
 	if err := json.Unmarshal(b, &plain); err != nil {
 		return err
 	}
-	*j = JSONRPCRequest[T, U](plain)
+	*j = JSONRPCRequest[T](plain)
 	return nil
 }
 
@@ -237,17 +236,10 @@ func (j JSONRPCError[T]) Error() string {
 	return fmt.Sprintf("MCP error %d: %s", j.Err.Code, j.Err.Message)
 }
 
-// Token is used as a generic constraint.
-// NOTE: this is mostly to make the semantics clearer as well
-// as adding the comparable constraints so we can use Tokens as map keys.
-type Token interface {
-	~uint64
-}
-
 // A progress token, used to associate progress
 // NOTE: ProgressToken is defined in the spec as string | number
 // But Go type system is very sad, so we are sticking with uint64 for now.
-type ProgressToken[T Token] struct {
+type ProgressToken[T ID] struct {
 	Value T `json:"-"`
 }
 
@@ -333,7 +325,7 @@ func (j *CallToolRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Used by the client to invoke a tool provided by the server.
-type CallToolRequest[T Token] struct {
+type CallToolRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CallToolRequestParams `json:"params"`
@@ -645,7 +637,7 @@ func (j *CompleteRequestParams[T]) UnmarshalJSON(b []byte) error {
 }
 
 // A request from the client to the server, to ask for completion options.
-type CompleteRequest[T Token, U CompleteRequestParamsRef] struct {
+type CompleteRequest[T ID, U CompleteRequestParamsRef] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CompleteRequestParams[U] `json:"params"`
@@ -815,7 +807,7 @@ func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
 // discretion over which model to select. The client should also inform the user
 // before beginning sampling, to allow them to inspect the request (human in the
 // loop) and decide whether to approve it.
-type CreateMessageRequest[T Token, U SamplingMessageContent] struct {
+type CreateMessageRequest[T ID, U SamplingMessageContent] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params CreateMessageRequestParams[U] `json:"params"`
@@ -971,7 +963,7 @@ func (j *GetPromptRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Used by the client to get a prompt provided by the server.
-type GetPromptRequest[T Token] struct {
+type GetPromptRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params GetPromptRequestParams `json:"params"`
@@ -1425,7 +1417,7 @@ func (j *ListResourcesResult) UnmarshalJSON(b []byte) error {
 // system
 // structure or access specific locations that the client has permission to read
 // from.
-type ListRootsRequest[T Token] struct {
+type ListRootsRequest[T ID] struct {
 	Request[T]
 }
 
@@ -1801,14 +1793,14 @@ type PaginatedResult struct {
 // attach additional metadata to their responses.
 type PaginatedResultMeta map[string]any
 
-type PingRequestParams[T Token] struct {
+type PingRequestParams[T ID] struct {
 	// Meta corresponds to the JSON schema field "_meta".
 	Meta *PingRequestParamsMeta[T] `json:"_meta,omitempty"`
 	// AdditionalProperties reserved for future use.
 	AdditionalProperties any `json:",omitempty"`
 }
 
-type PingRequestParamsMeta[T Token] struct {
+type PingRequestParamsMeta[T ID] struct {
 	// If specified, the caller is requesting out-of-band progress notifications for
 	// this request (as represented by notifications/progress). The value of this
 	// parameter is an opaque token that will be attached to any subsequent
@@ -1818,7 +1810,7 @@ type PingRequestParamsMeta[T Token] struct {
 
 // A ping, issued by either the server or the client, to check that the other party
 // is still alive. The receiver must promptly respond, or else may be disconnected.
-type PingRequest[T Token] struct {
+type PingRequest[T ID] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
@@ -1847,7 +1839,7 @@ func (j *PingRequest[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type ProgressNotificationParams[T Token] struct {
+type ProgressNotificationParams[T ID] struct {
 	// The progress thus far. This should increase every time progress is made, even
 	// if the total is unknown.
 	Progress float64 `json:"progress"`
@@ -1881,7 +1873,7 @@ func (j *ProgressNotificationParams[T]) UnmarshalJSON(b []byte) error {
 
 // An out-of-band notification used to inform the receiver of a progress update for
 // a long-running request.
-type ProgressNotification[T Token] struct {
+type ProgressNotification[T ID] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
@@ -2130,7 +2122,7 @@ func (j *ReadResourceRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // Sent from the client to the server, to read a specific resource URI.
-type ReadResourceRequest[T Token] struct {
+type ReadResourceRequest[T ID] struct {
 	Request[T]
 	Params *ReadResourceRequestParams `json:"params,omitempty"`
 }
@@ -2272,14 +2264,7 @@ func (r *RequestID[T]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type RequestParams[T Token] struct {
-	// Meta corresponds to the JSON schema field "_meta".
-	Meta *RequestParamsMeta[T] `json:"_meta,omitempty"`
-	// AdditionalProperties are reserved for future use.
-	AdditionalProperties any `json:",omitempty"`
-}
-
-type RequestParamsMeta[T Token] struct {
+type RequestParamsMeta[T ID] struct {
 	// If specified, the caller is requesting out-of-band progress notifications for
 	// this request (as represented by notifications/progress). The value of this
 	// parameter is an opaque token that will be attached to any subsequent
@@ -2287,7 +2272,14 @@ type RequestParamsMeta[T Token] struct {
 	ProgressToken *ProgressToken[T] `json:"progressToken,omitempty"`
 }
 
-type Request[T Token] struct {
+type RequestParams[T ID] struct {
+	// Meta corresponds to the JSON schema field "_meta".
+	Meta *RequestParamsMeta[T] `json:"_meta,omitempty"`
+	// AdditionalProperties are reserved for future use.
+	AdditionalProperties any `json:",omitempty"`
+}
+
+type Request[T ID] struct {
 	// Method corresponds to the JSON schema field "method".
 	Method RequestMethod `json:"method"`
 	// Params corresponds to the JSON schema field "params".
@@ -2762,7 +2754,7 @@ func (j *SetLevelRequestParams) UnmarshalJSON(b []byte) error {
 }
 
 // A request from the client to the server, to enable or adjust logging.
-type SetLevelRequest[T Token] struct {
+type SetLevelRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params SetLevelRequestParams `json:"params"`
@@ -2819,7 +2811,7 @@ func (j *SubscribeRequestParams) UnmarshalJSON(b []byte) error {
 
 // Sent from the client to request resources/updated notifications from the server
 // whenever a particular resource changes.
-type SubscribeRequest[T Token] struct {
+type SubscribeRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params SubscribeRequestParams `json:"params"`
@@ -3056,7 +3048,7 @@ func (j *UnsubscribeRequestParams) UnmarshalJSON(b []byte) error {
 
 // Sent from the client to request cancellation of resources/updated notifications
 // from the server. This should follow a previous resources/subscribe request.
-type UnsubscribeRequest[T Token] struct {
+type UnsubscribeRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params UnsubscribeRequestParams `json:"params"`

@@ -52,29 +52,29 @@ var (
 )
 
 // RequestHandler for handling RPC requests.
-type RequestHandler[T Token, U ID] func(context.Context, *JSONRPCRequest[T, U]) (Result, error)
+type RequestHandler[T ID] func(context.Context, *JSONRPCRequest[T]) (Result, error)
 
 // NotificationHandler for handing RPC notifications.
 type NotificationHandler func(context.Context, *JSONRPCNotification) error
 
 // ResponseOrError tracks responses for specific requests
-type ResponseOrError[U ID] struct {
-	Response *JSONRPCResponse[U]
+type ResponseOrError[T ID] struct {
+	Response *JSONRPCResponse[T]
 	Error    error
 }
 
 // Protocol is a Transport agnostic implementation of MCP communication protocol.
-type Protocol[T Token, U ID] struct {
+type Protocol[T ID] struct {
 	transport Transport
 
 	// For tracking pending requests
 	pendingMu sync.RWMutex
-	pending   map[RequestID[U]]chan ResponseOrError[U]
+	pending   map[RequestID[T]]chan ResponseOrError[T]
 	nextID    atomic.Uint64
 
 	// For request handlers
 	handlersMu sync.RWMutex
-	handlers   map[RequestMethod]RequestHandler[T, U]
+	handlers   map[RequestMethod]RequestHandler[T]
 
 	// For notification handlers
 	notifyMu sync.RWMutex
@@ -92,12 +92,12 @@ type Protocol[T Token, U ID] struct {
 }
 
 // NewProtocol creates a new instances of Protocol and returns it.
-func NewProtocol[T Token, U ID](transport Transport) *Protocol[T, U] {
+func NewProtocol[T ID](transport Transport) *Protocol[T] {
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &Protocol[T, U]{
+	p := &Protocol[T]{
 		transport: transport,
-		pending:   make(map[RequestID[U]]chan ResponseOrError[U]),
-		handlers:  make(map[RequestMethod]RequestHandler[T, U]),
+		pending:   make(map[RequestID[T]]chan ResponseOrError[T]),
+		handlers:  make(map[RequestMethod]RequestHandler[T]),
 		notify:    make(map[RequestMethod]NotificationHandler),
 		errChan:   make(chan error, 1),
 		ctx:       ctx,
@@ -105,7 +105,7 @@ func NewProtocol[T Token, U ID](transport Transport) *Protocol[T, U] {
 	}
 
 	// Register default ping handler
-	p.RegisterRequestHandler(PingRequestMethod, func(_ context.Context, _ *JSONRPCRequest[T, U]) (Result, error) {
+	p.RegisterRequestHandler(PingRequestMethod, func(_ context.Context, _ *JSONRPCRequest[T]) (Result, error) {
 		return Result{}, nil
 	})
 
@@ -115,7 +115,7 @@ func NewProtocol[T Token, U ID](transport Transport) *Protocol[T, U] {
 // Connect establishes the protocol on top of the given transport.
 // If protocol transport is not initialized it returns error.
 // If there are pending requests it returns error.
-func (p *Protocol[T, U]) Connect() error {
+func (p *Protocol[T]) Connect() error {
 	p.pendingMu.RLock()
 	defer p.pendingMu.RUnlock()
 
@@ -138,7 +138,7 @@ func (p *Protocol[T, U]) Connect() error {
 }
 
 // Close terminates the protocol and its transport.
-func (p *Protocol[T, U]) Close() error {
+func (p *Protocol[T]) Close() error {
 	p.cancel()
 
 	p.pendingMu.RLock()
@@ -150,7 +150,7 @@ func (p *Protocol[T, U]) Close() error {
 	return nil
 }
 
-func (p *Protocol[T, U]) SendRequest(ctx context.Context, req *JSONRPCRequest[T, U], opts ...Option) (*JSONRPCResponse[U], error) {
+func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], opts ...Option) (*JSONRPCResponse[T], error) {
 	options := DefaultOptions()
 	for _, apply := range opts {
 		apply(&options)
@@ -159,11 +159,11 @@ func (p *Protocol[T, U]) SendRequest(ctx context.Context, req *JSONRPCRequest[T,
 	// Returns the old value and increments
 	id := p.nextID.Add(1)
 
-	req.ID = RequestID[U]{Value: U(id)}
+	req.ID = RequestID[T]{Value: T(id)}
 	req.Jsonrpc = JSONRPCVersion
 
 	// Create response channel and register request
-	respChan := make(chan ResponseOrError[U], 1)
+	respChan := make(chan ResponseOrError[T], 1)
 
 	p.pendingMu.Lock()
 	p.pending[req.ID] = respChan
@@ -201,7 +201,7 @@ func (p *Protocol[T, U]) SendRequest(ctx context.Context, req *JSONRPCRequest[T,
 	select {
 	case result := <-respChan:
 		if result.Error != nil {
-			if errResp, ok := result.Error.(*JSONRPCError[U]); ok {
+			if errResp, ok := result.Error.(*JSONRPCError[T]); ok {
 				return nil, errResp
 			}
 			return nil, result.Error
@@ -220,7 +220,7 @@ func (p *Protocol[T, U]) SendRequest(ctx context.Context, req *JSONRPCRequest[T,
 }
 
 // SendNotification sends a notification (fire and forget)
-func (p *Protocol[T, U]) SendNotification(ctx context.Context, notif *JSONRPCNotification) error {
+func (p *Protocol[T]) SendNotification(ctx context.Context, notif *JSONRPCNotification) error {
 	// make sure we have the right version
 	notif.Jsonrpc = JSONRPCVersion
 	data, err := json.Marshal(notif)
@@ -232,7 +232,7 @@ func (p *Protocol[T, U]) SendNotification(ctx context.Context, notif *JSONRPCNot
 
 // RegisterRequestHandler registers a handler for the given request method.
 // If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T, U]) RegisterRequestHandler(method RequestMethod, handler RequestHandler[T, U]) {
+func (p *Protocol[T]) RegisterRequestHandler(method RequestMethod, handler RequestHandler[T]) {
 	p.handlersMu.Lock()
 	p.handlers[method] = handler
 	p.handlersMu.Unlock()
@@ -240,14 +240,14 @@ func (p *Protocol[T, U]) RegisterRequestHandler(method RequestMethod, handler Re
 
 // RegisterNotificationHandler registers a handler for the given notification request method.
 // If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T, U]) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler) {
+func (p *Protocol[T]) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler) {
 	p.notifyMu.Lock()
 	p.notify[method] = handler
 	p.notifyMu.Unlock()
 }
 
 // receiveLoop handles incoming messages from the transport
-func (p *Protocol[T, U]) receiveLoop() {
+func (p *Protocol[T]) receiveLoop() {
 	// reset the connected bit
 	defer p.running.Store(false)
 
@@ -272,7 +272,7 @@ func (p *Protocol[T, U]) receiveLoop() {
 
 // Factoring out response sending to handle errors properly
 // TODO: get rid of the opaque any type
-func (p *Protocol[T, U]) sendResponse(ctx context.Context, resp any) error {
+func (p *Protocol[T]) sendResponse(ctx context.Context, resp any) error {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
@@ -285,33 +285,33 @@ func (p *Protocol[T, U]) sendResponse(ctx context.Context, resp any) error {
 	return nil
 }
 
-func (p *Protocol[T, U]) handleError(_ context.Context, err JSONRPCError[U]) {
+func (p *Protocol[T]) handleError(_ context.Context, err JSONRPCError[T]) {
 	p.pendingMu.RLock()
 	ch, ok := p.pending[err.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
 		select {
-		case ch <- ResponseOrError[U]{Error: &err}:
+		case ch <- ResponseOrError[T]{Error: &err}:
 		case <-p.ctx.Done():
 		}
 	}
 }
 
-func (p *Protocol[T, U]) handleResponse(_ context.Context, resp JSONRPCResponse[U]) {
+func (p *Protocol[T]) handleResponse(_ context.Context, resp JSONRPCResponse[T]) {
 	p.pendingMu.RLock()
 	ch, ok := p.pending[resp.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
 		select {
-		case ch <- ResponseOrError[U]{Response: &resp}:
+		case ch <- ResponseOrError[T]{Response: &resp}:
 		case <-p.ctx.Done():
 		}
 	}
 }
 
-func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T, U]) {
+func (p *Protocol[T]) handleRequest(ctx context.Context, req JSONRPCRequest[T]) {
 	p.pendingMu.RLock()
 	ch, ok := p.pending[req.ID]
 	p.pendingMu.RUnlock()
@@ -327,7 +327,7 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 	// No handler exists for this method
 	// We must return JSONRPCMethodNotFoundError
 	if !ok {
-		errResp := &JSONRPCError[U]{
+		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
 			Jsonrpc: JSONRPCVersion,
 			Err: JSONRPCErrorMsg{
@@ -337,7 +337,7 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 		}
 		if err := p.sendResponse(ctx, errResp); err != nil {
 			select {
-			case ch <- ResponseOrError[U]{
+			case ch <- ResponseOrError[T]{
 				Error: fmt.Errorf("failed to send method not found error: %w", err),
 			}:
 			case <-p.ctx.Done():
@@ -348,7 +348,7 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 
 	result, err := handler(ctx, &req)
 	if err != nil {
-		errResp := &JSONRPCError[U]{
+		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
 			Jsonrpc: JSONRPCVersion,
 			Err: JSONRPCErrorMsg{
@@ -361,7 +361,7 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 		}
 		if err := p.sendResponse(ctx, errResp); err != nil {
 			select {
-			case ch <- ResponseOrError[U]{
+			case ch <- ResponseOrError[T]{
 				Error: fmt.Errorf("failed to send error response: %w", err),
 			}:
 			case <-p.ctx.Done():
@@ -371,14 +371,14 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 	}
 
 	// Send success response
-	resp := &JSONRPCResponse[U]{
+	resp := &JSONRPCResponse[T]{
 		ID:      req.ID,
 		Jsonrpc: JSONRPCVersion,
 		Result:  result,
 	}
 	if err := p.sendResponse(ctx, resp); err != nil {
 		select {
-		case ch <- ResponseOrError[U]{
+		case ch <- ResponseOrError[T]{
 			Error: fmt.Errorf("failed to send response: %w", err),
 		}:
 		case <-p.ctx.Done():
@@ -386,7 +386,7 @@ func (p *Protocol[T, U]) handleRequest(ctx context.Context, req JSONRPCRequest[T
 	}
 }
 
-func (p *Protocol[T, U]) handleNotification(ctx context.Context, notif JSONRPCNotification) {
+func (p *Protocol[T]) handleNotification(ctx context.Context, notif JSONRPCNotification) {
 	p.notifyMu.RLock()
 	handler, ok := p.notify[notif.Method]
 	p.notifyMu.RUnlock()
@@ -401,25 +401,25 @@ func (p *Protocol[T, U]) handleNotification(ctx context.Context, notif JSONRPCNo
 
 // handleMessage processes a received message
 // NOTE: msg:  JSONRPCRequest | JSONRPCNotification | JSONRPCResponse | JSONRPCError
-func (p *Protocol[T, U]) handleMessage(msg []byte) {
+func (p *Protocol[T]) handleMessage(msg []byte) {
 	// Create request-specific context
 	// TODO: consider creating this in handleMessage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var errResp JSONRPCError[U]
+	var errResp JSONRPCError[T]
 	if err := json.Unmarshal(msg, &errResp); err == nil {
 		p.handleError(ctx, errResp)
 		return
 	}
 
-	var resp JSONRPCResponse[U]
+	var resp JSONRPCResponse[T]
 	if err := json.Unmarshal(msg, &resp); err == nil {
 		p.handleResponse(ctx, resp)
 		return
 	}
 
-	var req JSONRPCRequest[T, U]
+	var req JSONRPCRequest[T]
 	if err := json.Unmarshal(msg, &req); err == nil {
 		p.handleRequest(ctx, req)
 		return
