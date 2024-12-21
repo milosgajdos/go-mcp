@@ -10,6 +10,94 @@ const (
 	LatestVersion  = "2024-11-05"
 )
 
+// JSONRPCMessage is the interface constraint for all JSON-RPC message types.
+type JSONRPCMessage[T ID] interface {
+	JSONRPCRequest[T] | JSONRPCNotification | JSONRPCResponse[T] | JSONRPCError[T]
+}
+
+// ClienRequest is the interface constraint for all MPC client requests.
+type ClienRequest[T ID, U CompleteRequestParamsRef] interface {
+	PingRequest[T] |
+		InitializeRequest |
+		CompleteRequest[T, U] |
+		SetLevelRequest[T] |
+		GetPromptRequest[T] |
+		ListPromptsRequest |
+		ListResourcesRequest |
+		ListResourceTemplatesRequest |
+		ReadResourceRequest[T] |
+		SubscribeRequest[T] |
+		UnsubscribeRequest[T] |
+		CallToolRequest[T] |
+		ListToolsRequest
+}
+
+// ClientNotification is the interface constraint for all MPC client notifications.
+type ClientNotification[T ID] interface {
+	ProgressNotification[T] | InitializedNotification | RootsListChangedNotification
+}
+
+// ClientResult is the interface constraint for all MPC client results.
+type ClientResult[T SamplingMessageContent] interface {
+	Result | CreateMessageResult[T] | ListRootsResult
+}
+
+// ServerRequest is the interface constraint for all MPC server requests.
+type ServerRequest[T ID, U SamplingMessageContent] interface {
+	PingRequest[T] | CreateMessageRequest[T, U] | ListRootsRequest[T]
+}
+
+// ServerNotification is the interface constraint for all MPC server notifications.
+type ServerNotification[T ID] interface {
+	ProgressNotification[T] |
+		LoggingMessageNotification |
+		ResourceUpdatedNotification |
+		ResourceListChangedNotification |
+		ToolListChangedNotification |
+		PromptListChangedNotification
+}
+
+// ServerResult is the interface constraint for all MPC server results.
+type ServerResult[T PromptMessageContent, U ReadResourceResultContent, V CallToolResultContent] interface {
+	Result |
+		InitializeResult |
+		CompleteResult |
+		GetPromptResult[T] |
+		ListPromptsResult |
+		ListResourcesResult |
+		ListResourceTemplatesResult |
+		ReadResourceResult[U] |
+		CallToolResult[V] |
+		ListToolsResult
+}
+
+// Client/Server generic constraintss
+
+type SendRequestT[T ID, U CompleteRequestParamsRef, V SamplingMessageContent] interface {
+	ClienRequest[T, U] | ServerRequest[T, V]
+}
+
+type SendResultT[T SamplingMessageContent, P PromptMessageContent, U ReadResourceResultContent, V CallToolResultContent] interface {
+	ClientResult[T] | ServerResult[P, U, V]
+}
+
+type SendNotificationT[T ID] interface {
+	ClientNotification[T] | ServerNotification[T]
+}
+
+type ReceiveRequestT[T ID, U CompleteRequestParamsRef, V SamplingMessageContent] interface {
+	ClienRequest[T, U] | ServerRequest[T, V]
+}
+
+type ReceiveResultT interface {
+	Result
+}
+
+type ReceiveNotificationT[T ID] interface {
+	ClientNotification[T] | ServerNotification[T]
+}
+
+// JSONRPCMessageType is used to identify JSONRPCM message type.
 type JSONRPCMessageType string
 
 const (
@@ -21,7 +109,7 @@ const (
 
 // JSONRPCMessageTyper is the interface for all JSON-RPC message types.
 type JSONRPCMessageTyper interface {
-	MessageType() JSONRPCMessageType
+	JSONRPCMessageType() JSONRPCMessageType
 }
 
 // A request that expects a response.
@@ -29,13 +117,13 @@ type JSONRPCRequest[T ID] struct {
 	Request[T]
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
+	// Version corresponds to the JSON RPC Versiom.
 	// It must be set to JSONRPCVersion
-	Jsonrpc string `json:"jsonrpc"`
+	Version string `json:"jsonrpc"`
 }
 
-// Implement JSONRPCMessage
-func (j JSONRPCRequest[T]) MessageType() JSONRPCMessageType {
+// Implement JSONRPCMessageTyper
+func (j JSONRPCRequest[T]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCRequestMsgType
 }
 
@@ -58,20 +146,19 @@ func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCRequest: required")
 	}
-	type Plain JSONRPCRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req JSONRPCRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = JSONRPCRequest[T](plain)
+	*j = req
 	return nil
 }
 
 // A notification which does not expect a response.
 type JSONRPCNotification struct {
 	Notification
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
+	// Version corresponds to the JSON schema field "jsonrpc".
+	Version string `json:"jsonrpc"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -90,17 +177,16 @@ func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCNotification: required")
 	}
-	type Plain JSONRPCNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n JSONRPCNotification
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = JSONRPCNotification(plain)
+	*j = n
 	return nil
 }
 
-// Implement JSONRPCMessage
-func (j JSONRPCNotification) MessageType() JSONRPCMessageType {
+// Implement JSONRPCMessageTyper
+func (j JSONRPCNotification) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCNotificationMsgType
 }
 
@@ -108,8 +194,8 @@ func (j JSONRPCNotification) MessageType() JSONRPCMessageType {
 type JSONRPCResponse[T ID] struct {
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
+	// Version corresponds to the JSON schema field "jsonrpc".
+	Version string `json:"jsonrpc"`
 	// Result corresponds to the JSON schema field "result".
 	Result Result `json:"result"`
 }
@@ -133,17 +219,16 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["result"]; raw != nil && !ok {
 		return fmt.Errorf("field result in JSONRPCResponse: required")
 	}
-	type Plain JSONRPCResponse[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var resp JSONRPCResponse[T]
+	if err := json.Unmarshal(b, &resp); err != nil {
 		return err
 	}
-	*j = JSONRPCResponse[T](plain)
+	*j = resp
 	return nil
 }
 
-// Implement JSONRPCMessage
-func (j JSONRPCResponse[T]) MessageType() JSONRPCMessageType {
+// Implement JSONRPCMessageTyper
+func (j JSONRPCResponse[T]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCResponseMsgType
 }
 
@@ -155,9 +240,11 @@ const (
 	JSONRPCMethodNotFoundError JSONRPCErrorCode = -32601
 	JSONRPCInvalidParamError   JSONRPCErrorCode = -32602
 	JSONRPCInternalError       JSONRPCErrorCode = -32603
+	JSONRPCConnectionClosed    JSONRPCErrorCode = -1
+	JSONRPCRequestTimeout      JSONRPCErrorCode = -2
 )
 
-type JSONRPCErrorMsg struct {
+type Error struct {
 	// The error type that occurred.
 	Code JSONRPCErrorCode `json:"code"`
 	// A short description of the error. The message SHOULD be limited to a concise
@@ -169,7 +256,7 @@ type JSONRPCErrorMsg struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCErrorMsg) UnmarshalJSON(b []byte) error {
+func (j *Error) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -180,27 +267,30 @@ func (j *JSONRPCErrorMsg) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["message"]; raw != nil && !ok {
 		return fmt.Errorf("field message in JSONRPCErrorError: required")
 	}
-	type Plain JSONRPCErrorMsg
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var e Error
+	if err := json.Unmarshal(b, &e); err != nil {
 		return err
 	}
-	*j = JSONRPCErrorMsg(plain)
+	*j = e
 	return nil
+}
+
+func (j Error) Error() string {
+	return fmt.Sprintf("error %d: %s", j.Code, j.Message)
 }
 
 // A response to a request that indicates an error occurred.
 type JSONRPCError[T ID] struct {
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
-	// Jsonrpc corresponds to the JSON schema field "jsonrpc".
-	Jsonrpc string `json:"jsonrpc"`
+	// Version corresponds to the JSON schema field "jsonrpc".
+	Version string `json:"jsonrpc"`
 	// Err corresponds to the JSON schema field "error".
-	Err JSONRPCErrorMsg `json:"error"`
+	Err Error `json:"error"`
 }
 
-// Implement JSONRPCMessage
-func (j JSONRPCError[T]) MessageType() JSONRPCMessageType {
+// Implement JSONRPCMessageTyper
+func (j JSONRPCError[T]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCErrorMsgType
 }
 
@@ -223,17 +313,21 @@ func (j *JSONRPCError[T]) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
 		return fmt.Errorf("invalid jsonrpc in JSONRPCNotification: %v", val)
 	}
-	type Plain JSONRPCError[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var e JSONRPCError[T]
+	if err := json.Unmarshal(b, &e); err != nil {
 		return err
 	}
-	*j = JSONRPCError[T](plain)
+	*j = e
 	return nil
 }
 
-func (j JSONRPCError[T]) Error() string {
-	return fmt.Sprintf("MCP error %d: %s", j.Err.Code, j.Err.Message)
+func (j *JSONRPCError[T]) Error() string {
+	return fmt.Sprintf("ID: %v, Error: %v", j.ID, j.Err)
+}
+
+// ID is used as a generic constraint.
+type ID interface {
+	~uint64
 }
 
 // A progress token, used to associate progress
@@ -282,18 +376,17 @@ type AnnotatedAnnotations struct {
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *AnnotatedAnnotations) UnmarshalJSON(b []byte) error {
-	type Plain AnnotatedAnnotations
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var a AnnotatedAnnotations
+	if err := json.Unmarshal(b, &a); err != nil {
 		return err
 	}
-	if plain.Priority != nil && 1 < *plain.Priority {
+	if a.Priority != nil && 1 < *a.Priority {
 		return fmt.Errorf("field %s: must be <= %v", "priority", 1)
 	}
-	if plain.Priority != nil && 0 > *plain.Priority {
+	if a.Priority != nil && 0 > *a.Priority {
 		return fmt.Errorf("field %s: must be >= %v", "priority", 0)
 	}
-	*j = AnnotatedAnnotations(plain)
+	*j = a
 	return nil
 }
 
@@ -315,12 +408,11 @@ func (j *CallToolRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["name"]; raw != nil && !ok {
 		return fmt.Errorf("field name in CallToolRequestParams: required")
 	}
-	type Plain CallToolRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var param CallToolRequestParams
+	if err := json.Unmarshal(b, &param); err != nil {
 		return err
 	}
-	*j = CallToolRequestParams(plain)
+	*j = param
 	return nil
 }
 
@@ -347,12 +439,11 @@ func (j *CallToolRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CallToolRequest: required")
 	}
-	type Plain CallToolRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var tool CallToolRequest[T]
+	if err := json.Unmarshal(b, &tool); err != nil {
 		return err
 	}
-	*j = CallToolRequest[T](plain)
+	*j = tool
 	return nil
 }
 
@@ -466,12 +557,11 @@ func (j *CancelledNotificationParams[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["requestId"]; raw != nil && !ok {
 		return fmt.Errorf("field requestId in CancelledNotificationParams: required")
 	}
-	type Plain CancelledNotificationParams[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CancelledNotificationParams[T]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CancelledNotificationParams[T](plain)
+	*j = c
 	return nil
 }
 
@@ -509,12 +599,11 @@ func (j *CancelledNotification[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CancelledNotification: required")
 	}
-	type Plain CancelledNotification[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CancelledNotification[T]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CancelledNotification[T](plain)
+	*j = c
 	return nil
 }
 
@@ -561,12 +650,11 @@ func (j *CompleteRequestParamsArgument) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["value"]; raw != nil && !ok {
 		return fmt.Errorf("field value in CompleteRequestParamsArgument: required")
 	}
-	type Plain CompleteRequestParamsArgument
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CompleteRequestParamsArgument
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CompleteRequestParamsArgument(plain)
+	*j = c
 	return nil
 }
 
@@ -659,12 +747,11 @@ func (j *CompleteRequest[T, U]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CompleteRequest: required")
 	}
-	type Plain CompleteRequest[T, U]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CompleteRequest[T, U]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CompleteRequest[T, U](plain)
+	*j = c
 	return nil
 }
 
@@ -695,12 +782,11 @@ func (j *CompleteResultCompletion) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["values"]; raw != nil && !ok {
 		return fmt.Errorf("field values in CompleteResultCompletion: required")
 	}
-	type Plain CompleteResultCompletion
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CompleteResultCompletion
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CompleteResultCompletion(plain)
+	*j = c
 	return nil
 }
 
@@ -717,37 +803,36 @@ func (j *CompleteResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["completion"]; raw != nil && !ok {
 		return fmt.Errorf("field completion in CompleteResult: required")
 	}
-	type Plain CompleteResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CompleteResult
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CompleteResult(plain)
+	*j = c
 	return nil
 }
 
-type CreateMessageRequestParamsIncludeContext string
+type CreateMessageRequestParamsIncludeCtx string
 
 const (
-	CreateMessageRequestParamsIncludeContextNone       CreateMessageRequestParamsIncludeContext = "none"
-	CreateMessageRequestParamsIncludeContextAllServers CreateMessageRequestParamsIncludeContext = "allServers"
-	CreateMessageRequestParamsIncludeContextThisServer CreateMessageRequestParamsIncludeContext = "thisServer"
+	CreateMessageRequestParamsIncludeCtxNone       CreateMessageRequestParamsIncludeCtx = "none"
+	CreateMessageRequestParamsIncludeCtxAllServers CreateMessageRequestParamsIncludeCtx = "allServers"
+	CreateMessageRequestParamsIncludeCtxThisServer CreateMessageRequestParamsIncludeCtx = "thisServer"
 )
 
-var enumValuesCreateMessageRequestParamsIncludeContext = map[CreateMessageRequestParamsIncludeContext]struct{}{
-	CreateMessageRequestParamsIncludeContextNone:       {},
-	CreateMessageRequestParamsIncludeContextAllServers: {},
-	CreateMessageRequestParamsIncludeContextThisServer: {},
+var enumValuesCreateMessageRequestParamsIncludeCtx = map[CreateMessageRequestParamsIncludeCtx]struct{}{
+	CreateMessageRequestParamsIncludeCtxNone:       {},
+	CreateMessageRequestParamsIncludeCtxAllServers: {},
+	CreateMessageRequestParamsIncludeCtxThisServer: {},
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequestParamsIncludeContext) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequestParamsIncludeCtx) UnmarshalJSON(b []byte) error {
 	var v string
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
-	ctx := CreateMessageRequestParamsIncludeContext(v)
-	if _, valid := enumValuesCreateMessageRequestParamsIncludeContext[ctx]; !valid {
+	ctx := CreateMessageRequestParamsIncludeCtx(v)
+	if _, valid := enumValuesCreateMessageRequestParamsIncludeCtx[ctx]; !valid {
 		return fmt.Errorf("invalid CreateMessageRequestParamsIncludeContext value: %v", ctx)
 	}
 	*j = ctx
@@ -769,7 +854,7 @@ type CreateMessageRequestParams[T SamplingMessageContent] struct {
 	SystemPrompt *string `json:"systemPrompt,omitempty"`
 	// A request to include context from one or more MCP servers (including the
 	// caller), to be attached to the prompt. The client MAY ignore this request.
-	IncludeContext *CreateMessageRequestParamsIncludeContext `json:"includeContext,omitempty"`
+	IncludeContext *CreateMessageRequestParamsIncludeCtx `json:"includeContext,omitempty"`
 	// Temperature corresponds to the JSON schema field "temperature".
 	Temperature *float64 `json:"temperature,omitempty"`
 	// The maximum number of tokens to sample, as requested by the server. The client
@@ -794,12 +879,11 @@ func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in CreateMessageRequestParams: required")
 	}
-	type Plain CreateMessageRequestParams[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CreateMessageRequestParams[T]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CreateMessageRequestParams[T](plain)
+	*j = c
 	return nil
 }
 
@@ -829,12 +913,11 @@ func (j *CreateMessageRequest[T, U]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CreateMessageRequest: required")
 	}
-	type Plain CreateMessageRequest[T, U]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CreateMessageRequest[T, U]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CreateMessageRequest[T, U](plain)
+	*j = c
 	return nil
 }
 
@@ -866,12 +949,11 @@ func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["role"]; raw != nil && !ok {
 		return fmt.Errorf("field role in CreateMessageResult: required")
 	}
-	type Plain CreateMessageResult[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var c CreateMessageResult[T]
+	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	*j = CreateMessageResult[T](plain)
+	*j = c
 	return nil
 }
 
@@ -953,12 +1035,11 @@ func (j *GetPromptRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["name"]; raw != nil && !ok {
 		return fmt.Errorf("field name in GetPromptRequestParams: required")
 	}
-	type Plain GetPromptRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var p GetPromptRequestParams
+	if err := json.Unmarshal(b, &p); err != nil {
 		return err
 	}
-	*j = GetPromptRequestParams(plain)
+	*j = p
 	return nil
 }
 
@@ -985,12 +1066,11 @@ func (j *GetPromptRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in GetPromptRequest: required")
 	}
-	type Plain GetPromptRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req GetPromptRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = GetPromptRequest[T](plain)
+	*j = req
 	return nil
 }
 
@@ -1012,12 +1092,11 @@ func (j *GetPromptResult[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in GetPromptResult: required")
 	}
-	type Plain GetPromptResult[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res GetPromptResult[T]
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = GetPromptResult[T](plain)
+	*j = res
 	return nil
 }
 
@@ -1052,12 +1131,11 @@ func (j *ImageContent) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || ContentType(strVal) != ImageContentType {
 		return fmt.Errorf("invalid field type in ImageContent: %v", strVal)
 	}
-	type Plain ImageContent
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var img ImageContent
+	if err := json.Unmarshal(b, &img); err != nil {
 		return err
 	}
-	*j = ImageContent(plain)
+	*j = img
 	return nil
 }
 
@@ -1081,12 +1159,11 @@ func (j *Implementation) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["version"]; raw != nil && !ok {
 		return fmt.Errorf("field version in Implementation: required")
 	}
-	type Plain Implementation
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var impl Implementation
+	if err := json.Unmarshal(b, &impl); err != nil {
 		return err
 	}
-	*j = Implementation(plain)
+	*j = impl
 	return nil
 }
 
@@ -1115,12 +1192,11 @@ func (j *InitializeRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["protocolVersion"]; raw != nil && !ok {
 		return fmt.Errorf("field protocolVersion in InitializeRequestParams: required")
 	}
-	type Plain InitializeRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var params InitializeRequestParams
+	if err := json.Unmarshal(b, &params); err != nil {
 		return err
 	}
-	*j = InitializeRequestParams(plain)
+	*j = params
 	return nil
 }
 
@@ -1149,12 +1225,11 @@ func (j *InitializeRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in InitializeRequest: required")
 	}
-	type Plain InitializeRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req InitializeRequest
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = InitializeRequest(plain)
+	*j = req
 	return nil
 }
 
@@ -1198,12 +1273,11 @@ func (j *InitializeResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["serverInfo"]; raw != nil && !ok {
 		return fmt.Errorf("field serverInfo in InitializeResult: required")
 	}
-	type Plain InitializeResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res InitializeResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = InitializeResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1241,12 +1315,11 @@ func (j *InitializedNotification) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != InitializedNotificationMethod {
 		return fmt.Errorf("invalid field method in InitializedNotification: %v", strVal)
 	}
-	type Plain InitializedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n InitializedNotification
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = InitializedNotification(plain)
+	*j = n
 	return nil
 }
 
@@ -1269,12 +1342,11 @@ func (j *ListPromptsRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListPromptsRequestMethod {
 		return fmt.Errorf("invalid field method in ListPromptsRequest: %v", strVal)
 	}
-	type Plain ListPromptsRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var l ListPromptsRequest
+	if err := json.Unmarshal(b, &l); err != nil {
 		return err
 	}
-	*j = ListPromptsRequest(plain)
+	*j = l
 	return nil
 }
 
@@ -1294,12 +1366,11 @@ func (j *ListPromptsResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["prompts"]; raw != nil && !ok {
 		return fmt.Errorf("field prompts in ListPromptsResult: required")
 	}
-	type Plain ListPromptsResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ListPromptsResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ListPromptsResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1321,12 +1392,11 @@ func (j *ListResourceTemplatesRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListResourceTemplRequestMethod {
 		return fmt.Errorf("invalid field method in ListResourceTemplatesRequest: %v", strVal)
 	}
-	type Plain ListResourceTemplatesRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req ListResourceTemplatesRequest
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = ListResourceTemplatesRequest(plain)
+	*j = req
 	return nil
 }
 
@@ -1346,12 +1416,11 @@ func (j *ListResourceTemplatesResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["resourceTemplates"]; raw != nil && !ok {
 		return fmt.Errorf("field resourceTemplates in ListResourceTemplatesResult: required")
 	}
-	type Plain ListResourceTemplatesResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ListResourceTemplatesResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ListResourceTemplatesResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1373,12 +1442,11 @@ func (j *ListResourcesRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListResourcesRequestMethod {
 		return fmt.Errorf("invalid field method in ListResourcesRequest: %v", strVal)
 	}
-	type Plain ListResourcesRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req ListResourcesRequest
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = ListResourcesRequest(plain)
+	*j = req
 	return nil
 }
 
@@ -1398,12 +1466,11 @@ func (j *ListResourcesResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["resources"]; raw != nil && !ok {
 		return fmt.Errorf("field resources in ListResourcesResult: required")
 	}
-	type Plain ListResourcesResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ListResourcesResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ListResourcesResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1434,12 +1501,11 @@ func (j *ListRootsRequest[T]) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListRootsRequestMethod {
 		return fmt.Errorf("invalid field method in ListRootsRequest: %v", strVal)
 	}
-	type Plain ListRootsRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req ListRootsRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = ListRootsRequest[T](plain)
+	*j = req
 	return nil
 }
 
@@ -1462,12 +1528,11 @@ func (j *ListRootsResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["roots"]; raw != nil && !ok {
 		return fmt.Errorf("field roots in ListRootsResult: required")
 	}
-	type Plain ListRootsResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ListRootsResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ListRootsResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1489,12 +1554,11 @@ func (j *ListToolsRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListToolsRequestMethod {
 		return fmt.Errorf("invalid field method in ListToolsRequest: %v", strVal)
 	}
-	type Plain ListToolsRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req ListToolsRequest
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = ListToolsRequest(plain)
+	*j = req
 	return nil
 }
 
@@ -1514,12 +1578,11 @@ func (j *ListToolsResult) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["tools"]; raw != nil && !ok {
 		return fmt.Errorf("field tools in ListToolsResult: required")
 	}
-	type Plain ListToolsResult
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ListToolsResult
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ListToolsResult(plain)
+	*j = res
 	return nil
 }
 
@@ -1585,12 +1648,11 @@ func (j *LoggingMessageNotificationParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["level"]; raw != nil && !ok {
 		return fmt.Errorf("field level in LoggingMessageNotificationParams: required")
 	}
-	type Plain LoggingMessageNotificationParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var params LoggingMessageNotificationParams
+	if err := json.Unmarshal(b, &params); err != nil {
 		return err
 	}
-	*j = LoggingMessageNotificationParams(plain)
+	*j = params
 	return nil
 }
 
@@ -1619,12 +1681,11 @@ func (j *LoggingMessageNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in LoggingMessageNotification: required")
 	}
-	type Plain LoggingMessageNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n LoggingMessageNotification
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = LoggingMessageNotification(plain)
+	*j = n
 	return nil
 }
 
@@ -1684,30 +1745,29 @@ type ModelPreferences struct {
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *ModelPreferences) UnmarshalJSON(b []byte) error {
-	type Plain ModelPreferences
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var prefs ModelPreferences
+	if err := json.Unmarshal(b, &prefs); err != nil {
 		return err
 	}
-	if plain.CostPriority != nil && 1 < *plain.CostPriority {
+	if prefs.CostPriority != nil && 1 < *prefs.CostPriority {
 		return fmt.Errorf("field %s: must be <= %v", "costPriority", 1)
 	}
-	if plain.CostPriority != nil && 0 > *plain.CostPriority {
+	if prefs.CostPriority != nil && 0 > *prefs.CostPriority {
 		return fmt.Errorf("field %s: must be >= %v", "costPriority", 0)
 	}
-	if plain.IntelligencePriority != nil && 1 < *plain.IntelligencePriority {
+	if prefs.IntelligencePriority != nil && 1 < *prefs.IntelligencePriority {
 		return fmt.Errorf("field %s: must be <= %v", "intelligencePriority", 1)
 	}
-	if plain.IntelligencePriority != nil && 0 > *plain.IntelligencePriority {
+	if prefs.IntelligencePriority != nil && 0 > *prefs.IntelligencePriority {
 		return fmt.Errorf("field %s: must be >= %v", "intelligencePriority", 0)
 	}
-	if plain.SpeedPriority != nil && 1 < *plain.SpeedPriority {
+	if prefs.SpeedPriority != nil && 1 < *prefs.SpeedPriority {
 		return fmt.Errorf("field %s: must be <= %v", "speedPriority", 1)
 	}
-	if plain.SpeedPriority != nil && 0 > *plain.SpeedPriority {
+	if prefs.SpeedPriority != nil && 0 > *prefs.SpeedPriority {
 		return fmt.Errorf("field %s: must be >= %v", "speedPriority", 0)
 	}
-	*j = ModelPreferences(plain)
+	*j = prefs
 	return nil
 }
 
@@ -1739,12 +1799,11 @@ func (j *Notification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in Notification: required")
 	}
-	type Plain Notification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n Notification
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = Notification(plain)
+	*j = n
 	return nil
 }
 
@@ -1770,12 +1829,11 @@ func (j *PaginatedRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in PaginatedRequest: required")
 	}
-	type Plain PaginatedRequest
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req PaginatedRequest
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = PaginatedRequest(plain)
+	*j = req
 	return nil
 }
 
@@ -1830,12 +1888,11 @@ func (j *PingRequest[T]) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != PingRequestMethod {
 		return fmt.Errorf("invalid field method in PingRequest: %v", strVal)
 	}
-	type Plain PingRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req PingRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = PingRequest[T](plain)
+	*j = req
 	return nil
 }
 
@@ -1862,12 +1919,11 @@ func (j *ProgressNotificationParams[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["progressToken"]; raw != nil && !ok {
 		return fmt.Errorf("field progressToken in ProgressNotificationParams: required")
 	}
-	type Plain ProgressNotificationParams[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var params ProgressNotificationParams[T]
+	if err := json.Unmarshal(b, &params); err != nil {
 		return err
 	}
-	*j = ProgressNotificationParams[T](plain)
+	*j = params
 	return nil
 }
 
@@ -1896,12 +1952,11 @@ func (j *ProgressNotification[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ProgressNotification: required")
 	}
-	type Plain ProgressNotification[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n ProgressNotification[T]
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = ProgressNotification[T](plain)
+	*j = n
 	return nil
 }
 
@@ -1924,12 +1979,11 @@ func (j *PromptArgument) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["name"]; raw != nil && !ok {
 		return fmt.Errorf("field name in PromptArgument: required")
 	}
-	type Plain PromptArgument
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var arg PromptArgument
+	if err := json.Unmarshal(b, &arg); err != nil {
 		return err
 	}
-	*j = PromptArgument(plain)
+	*j = arg
 	return nil
 }
 
@@ -1952,12 +2006,11 @@ func (j *Prompt) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["name"]; raw != nil && !ok {
 		return fmt.Errorf("field name in Prompt: required")
 	}
-	type Plain Prompt
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var prompt Prompt
+	if err := json.Unmarshal(b, &prompt); err != nil {
 		return err
 	}
-	*j = Prompt(plain)
+	*j = prompt
 	return nil
 }
 
@@ -1981,12 +2034,11 @@ func (j *PromptListChangedNotification) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != PromptListChangedNotificationMethod {
 		return fmt.Errorf("invalid field method in PromptListChangedNotification: %v", strVal)
 	}
-	type Plain PromptListChangedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n PromptListChangedNotification
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = PromptListChangedNotification(plain)
+	*j = n
 	return nil
 }
 
@@ -2088,12 +2140,11 @@ func (j *PromptReference) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || ReferenceType(strVal) != PromptReferenceType {
 		return fmt.Errorf("invalid field type in PromptReference: %v", strVal)
 	}
-	type Plain PromptReference
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var ref PromptReference
+	if err := json.Unmarshal(b, &ref); err != nil {
 		return err
 	}
-	*j = PromptReference(plain)
+	*j = ref
 	return nil
 }
 
@@ -2112,12 +2163,11 @@ func (j *ReadResourceRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in ReadResourceRequestParams: required")
 	}
-	type Plain ReadResourceRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var params ReadResourceRequestParams
+	if err := json.Unmarshal(b, &params); err != nil {
 		return err
 	}
-	*j = ReadResourceRequestParams(plain)
+	*j = params
 	return nil
 }
 
@@ -2143,12 +2193,11 @@ func (j *ReadResourceRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ReadResourceRequest: required")
 	}
-	type Plain ReadResourceRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req ReadResourceRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = ReadResourceRequest[T](plain)
+	*j = req
 	return nil
 }
 
@@ -2235,13 +2284,6 @@ const (
 	CallToolRequestMethod                 RequestMethod = "tools/call"
 )
 
-// ID is used as a generic constraint.
-// NOTE: this is mostly to make the semantics clearer as well
-// as adding the comparable constraints so we can use IDs as map keys.
-type ID interface {
-	~uint64
-}
-
 // RequestID is a uniquely identifying ID for a request in JSON-RPC.
 // NOTE: RequestID is defined in the spec as string | number
 // But Go type system is very sad, so we are sticking with uint64 for now.
@@ -2295,12 +2337,11 @@ func (j *Request[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in Request: required")
 	}
-	type Plain Request[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req Request[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = Request[T](plain)
+	*j = req
 	return nil
 }
 
@@ -2337,12 +2378,11 @@ func (j *ResourceContents) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in ResourceContents: required")
 	}
-	type Plain ResourceContents
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ResourceContents
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ResourceContents(plain)
+	*j = res
 	return nil
 }
 
@@ -2369,12 +2409,11 @@ func (j *ResourceListChangedNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ReadResourceRequest: required")
 	}
-	type Plain ResourceListChangedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ResourceListChangedNotification
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ResourceListChangedNotification(plain)
+	*j = res
 	return nil
 }
 
@@ -2402,12 +2441,11 @@ func (j *ResourceReference) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in ResourceReference: required")
 	}
-	type Plain ResourceReference
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ResourceReference
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ResourceReference(plain)
+	*j = res
 	return nil
 }
 
@@ -2440,12 +2478,11 @@ func (j *ResourceTemplate) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uriTemplate"]; raw != nil && !ok {
 		return fmt.Errorf("field uriTemplate in ResourceTemplate: required")
 	}
-	type Plain ResourceTemplate
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ResourceTemplate
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ResourceTemplate(plain)
+	*j = res
 	return nil
 }
 
@@ -2464,12 +2501,11 @@ func (j *ResourceUpdatedNotificationParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in ResourceUpdatedNotificationParams: required")
 	}
-	type Plain ResourceUpdatedNotificationParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var n ResourceUpdatedNotificationParams
+	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*j = ResourceUpdatedNotificationParams(plain)
+	*j = n
 	return nil
 }
 
@@ -2498,12 +2534,11 @@ func (j *ResourceUpdatedNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in ResourceUpdatedNotification: required")
 	}
-	type Plain ResourceUpdatedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res ResourceUpdatedNotification
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = ResourceUpdatedNotification(plain)
+	*j = res
 	return nil
 }
 
@@ -2519,12 +2554,11 @@ func (j *Resource) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in Resource: required")
 	}
-	type Plain Resource
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var res Resource
+	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
-	*j = Resource(plain)
+	*j = res
 	return nil
 }
 
@@ -2589,12 +2623,11 @@ func (j *Root) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in Root: required")
 	}
-	type Plain Root
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var root Root
+	if err := json.Unmarshal(b, &root); err != nil {
 		return err
 	}
-	*j = Root(plain)
+	*j = root
 	return nil
 }
 
@@ -2621,12 +2654,11 @@ func (j *RootsListChangedNotification) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != RootsListChangedNotificationMethod {
 		return fmt.Errorf("invalid field method in RootsListChangedNotification: %v", strVal)
 	}
-	type Plain RootsListChangedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var roots RootsListChangedNotification
+	if err := json.Unmarshal(b, &roots); err != nil {
 		return err
 	}
-	*j = RootsListChangedNotification(plain)
+	*j = roots
 	return nil
 }
 
@@ -2744,12 +2776,11 @@ func (j *SetLevelRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["level"]; raw != nil && !ok {
 		return fmt.Errorf("field level in SetLevelRequestParams: required")
 	}
-	type Plain SetLevelRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req SetLevelRequestParams
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = SetLevelRequestParams(plain)
+	*j = req
 	return nil
 }
 
@@ -2776,12 +2807,11 @@ func (j *SetLevelRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in SetLevelRequest: required")
 	}
-	type Plain SetLevelRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req SetLevelRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = SetLevelRequest[T](plain)
+	*j = req
 	return nil
 }
 
@@ -2800,12 +2830,11 @@ func (j *SubscribeRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in SubscribeRequestParams: required")
 	}
-	type Plain SubscribeRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var sub SubscribeRequestParams
+	if err := json.Unmarshal(b, &sub); err != nil {
 		return err
 	}
-	*j = SubscribeRequestParams(plain)
+	*j = sub
 	return nil
 }
 
@@ -2833,12 +2862,11 @@ func (j *SubscribeRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in SubscribeRequest: required")
 	}
-	type Plain SubscribeRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var sub SubscribeRequest[T]
+	if err := json.Unmarshal(b, &sub); err != nil {
 		return err
 	}
-	*j = SubscribeRequest[T](plain)
+	*j = sub
 	return nil
 }
 
@@ -2867,12 +2895,11 @@ func (j *TextContent) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || ContentType(strVal) != TextContentType {
 		return fmt.Errorf("invalid field type in TextContent: %v", strVal)
 	}
-	type Plain TextContent
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var text TextContent
+	if err := json.Unmarshal(b, &text); err != nil {
 		return err
 	}
-	*j = TextContent(plain)
+	*j = text
 	return nil
 }
 
@@ -2895,12 +2922,11 @@ func (j *TextResourceContents) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in TextResourceContents: required")
 	}
-	type Plain TextResourceContents
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var text TextResourceContents
+	if err := json.Unmarshal(b, &text); err != nil {
 		return err
 	}
-	*j = TextResourceContents(plain)
+	*j = text
 	return nil
 }
 
@@ -2922,12 +2948,11 @@ func (j *BlobResourceContents) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in BlobResourceContents: required")
 	}
-	type Plain BlobResourceContents
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var blob BlobResourceContents
+	if err := json.Unmarshal(b, &blob); err != nil {
 		return err
 	}
-	*j = BlobResourceContents(plain)
+	*j = blob
 	return nil
 }
 
@@ -2954,12 +2979,11 @@ func (j *ToolInputSchema) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || ContentType(strVal) != ObjectType {
 		return fmt.Errorf("invalid field type in ToolInputSchema: %v", strVal)
 	}
-	type Plain ToolInputSchema
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var tool ToolInputSchema
+	if err := json.Unmarshal(b, &tool); err != nil {
 		return err
 	}
-	*j = ToolInputSchema(plain)
+	*j = tool
 	return nil
 }
 
@@ -2985,12 +3009,11 @@ func (j *Tool) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["name"]; raw != nil && !ok {
 		return fmt.Errorf("field name in Tool: required")
 	}
-	type Plain Tool
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var tool Tool
+	if err := json.Unmarshal(b, &tool); err != nil {
 		return err
 	}
-	*j = Tool(plain)
+	*j = tool
 	return nil
 }
 
@@ -3014,12 +3037,11 @@ func (j *ToolListChangedNotification) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ToolListChangedNotificationMethod {
 		return fmt.Errorf("invalid field method in ToolListChangedNotification: %v", strVal)
 	}
-	type Plain ToolListChangedNotification
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var tool ToolListChangedNotification
+	if err := json.Unmarshal(b, &tool); err != nil {
 		return err
 	}
-	*j = ToolListChangedNotification(plain)
+	*j = tool
 	return nil
 }
 
@@ -3037,12 +3059,11 @@ func (j *UnsubscribeRequestParams) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["uri"]; raw != nil && !ok {
 		return fmt.Errorf("field uri in UnsubscribeRequestParams: required")
 	}
-	type Plain UnsubscribeRequestParams
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var params UnsubscribeRequestParams
+	if err := json.Unmarshal(b, &params); err != nil {
 		return err
 	}
-	*j = UnsubscribeRequestParams(plain)
+	*j = params
 	return nil
 }
 
@@ -3070,11 +3091,10 @@ func (j *UnsubscribeRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in UnsubscribeRequest: required")
 	}
-	type Plain UnsubscribeRequest[T]
-	var plain Plain
-	if err := json.Unmarshal(b, &plain); err != nil {
+	var req UnsubscribeRequest[T]
+	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
-	*j = UnsubscribeRequest[T](plain)
+	*j = req
 	return nil
 }

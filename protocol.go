@@ -38,11 +38,11 @@ func WithTimeout(timeout time.Duration) Option {
 
 var (
 	// ErrTransportClosed is returned when the transport has been closed.
-	ErrTransportClosed = errors.New("transport is closed")
+	ErrTransportClosed = errors.New("transport closed")
 	// ErrInvalidTransport is returned when attempting to connect using invalid transport.
 	ErrInvalidTransport = errors.New("invalid transport")
 	// ErrPendingRequests is returned when attempting to connect while there are unhandled requests.
-	ErrPendingRequests = errors.New("protocol has pending requests")
+	ErrPendingRequests = errors.New("pending requests")
 	// ErrRequestTimeout is returned when a request times out.
 	ErrRequestTimeout = errors.New("request timed out")
 	// ErrInvalidMessage is returned when an invalid message is handled.
@@ -60,7 +60,7 @@ type NotificationHandler func(context.Context, *JSONRPCNotification) error
 // ResponseOrError tracks responses for specific requests
 type ResponseOrError[T ID] struct {
 	Response *JSONRPCResponse[T]
-	Error    error
+	Error    *JSONRPCError[T]
 }
 
 // Protocol is a Transport agnostic implementation of MCP communication protocol.
@@ -132,7 +132,7 @@ func (p *Protocol[T]) Connect() error {
 		return ErrAlreadyConnected
 	}
 
-	go p.receiveLoop()
+	go p.receive()
 
 	return nil
 }
@@ -160,7 +160,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 	id := p.nextID.Add(1)
 
 	req.ID = RequestID[T]{Value: T(id)}
-	req.Jsonrpc = JSONRPCVersion
+	req.Version = JSONRPCVersion
 
 	// Create response channel and register request
 	respChan := make(chan ResponseOrError[T], 1)
@@ -201,15 +201,15 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 	select {
 	case result := <-respChan:
 		if result.Error != nil {
-			if errResp, ok := result.Error.(*JSONRPCError[T]); ok {
-				return nil, errResp
-			}
 			return nil, result.Error
 		}
 		return result.Response, nil
 	case <-timeoutCtx.Done():
 		if timeoutCtx.Err() == context.DeadlineExceeded {
-			return nil, ErrRequestTimeout
+			return nil, Error{
+				Code:    JSONRPCRequestTimeout,
+				Message: ErrRequestTimeout.Error(),
+			}
 		}
 		return nil, timeoutCtx.Err()
 	case <-ctx.Done():
@@ -222,7 +222,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 // SendNotification sends a notification (fire and forget)
 func (p *Protocol[T]) SendNotification(ctx context.Context, notif *JSONRPCNotification) error {
 	// make sure we have the right version
-	notif.Jsonrpc = JSONRPCVersion
+	notif.Version = JSONRPCVersion
 	data, err := json.Marshal(notif)
 	if err != nil {
 		return err
@@ -246,8 +246,8 @@ func (p *Protocol[T]) RegisterNotificationHandler(method RequestMethod, handler 
 	p.notifyMu.Unlock()
 }
 
-// receiveLoop handles incoming messages from the transport
-func (p *Protocol[T]) receiveLoop() {
+// receive handles incoming messages from the transport
+func (p *Protocol[T]) receive() {
 	// reset the connected bit
 	defer p.running.Store(false)
 
@@ -329,16 +329,18 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req JSONRPCRequest[T]) 
 	if !ok {
 		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
-			Jsonrpc: JSONRPCVersion,
-			Err: JSONRPCErrorMsg{
+			Version: JSONRPCVersion,
+			Err: Error{
 				Code:    JSONRPCMethodNotFoundError,
 				Message: "Method not found",
 			},
 		}
 		if err := p.sendResponse(ctx, errResp); err != nil {
+			errResp.Err.Code = JSONRPCInternalError
+			errResp.Err.Message = err.Error()
 			select {
 			case ch <- ResponseOrError[T]{
-				Error: fmt.Errorf("failed to send method not found error: %w", err),
+				Error: errResp,
 			}:
 			case <-p.ctx.Done():
 			}
@@ -350,8 +352,8 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req JSONRPCRequest[T]) 
 	if err != nil {
 		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
-			Jsonrpc: JSONRPCVersion,
-			Err: JSONRPCErrorMsg{
+			Version: JSONRPCVersion,
+			Err: Error{
 				Code:    JSONRPCInternalError,
 				Message: err.Error(),
 			},
@@ -360,9 +362,11 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req JSONRPCRequest[T]) 
 			ctx = context.Background()
 		}
 		if err := p.sendResponse(ctx, errResp); err != nil {
+			errResp.Err.Code = JSONRPCInternalError
+			errResp.Err.Message = err.Error()
 			select {
 			case ch <- ResponseOrError[T]{
-				Error: fmt.Errorf("failed to send error response: %w", err),
+				Error: errResp,
 			}:
 			case <-p.ctx.Done():
 			}
@@ -373,13 +377,21 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req JSONRPCRequest[T]) 
 	// Send success response
 	resp := &JSONRPCResponse[T]{
 		ID:      req.ID,
-		Jsonrpc: JSONRPCVersion,
+		Version: JSONRPCVersion,
 		Result:  result,
 	}
 	if err := p.sendResponse(ctx, resp); err != nil {
+		errResp := &JSONRPCError[T]{
+			ID:      req.ID,
+			Version: JSONRPCVersion,
+			Err: Error{
+				Code:    JSONRPCInternalError,
+				Message: err.Error(),
+			},
+		}
 		select {
 		case ch <- ResponseOrError[T]{
-			Error: fmt.Errorf("failed to send response: %w", err),
+			Error: errResp,
 		}:
 		case <-p.ctx.Done():
 		}
