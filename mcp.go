@@ -11,40 +11,44 @@ const (
 )
 
 // JSONRPCMessage is the interface constraint for all JSON-RPC message types.
-type JSONRPCMessage[T ID] interface {
-	JSONRPCRequest[T] | JSONRPCNotification | JSONRPCResponse[T] | JSONRPCError[T]
+type JSONRPCMessage[T ID, NF GenNotification[T], RQ GenRequest[T], RS GenResult] interface {
+	JSONRPCRequest[T, RQ] | JSONRPCNotification[T, NF] | JSONRPCResponse[T, RS] | JSONRPCError[T]
 }
 
 // ClienRequest is the interface constraint for all MPC client requests.
-type ClienRequest[T ID, U CompleteRequestParamsRef] interface {
+type ClienRequest[T ID] interface {
 	PingRequest[T] |
-		InitializeRequest |
-		CompleteRequest[T, U] |
+		InitializeRequest[T] |
+		CompleteRequest[T] |
 		SetLevelRequest[T] |
 		GetPromptRequest[T] |
-		ListPromptsRequest |
-		ListResourcesRequest |
-		ListResourceTemplatesRequest |
+		ListPromptsRequest[T] |
+		ListResourcesRequest[T] |
+		ListResourceTemplatesRequest[T] |
 		ReadResourceRequest[T] |
 		SubscribeRequest[T] |
 		UnsubscribeRequest[T] |
 		CallToolRequest[T] |
-		ListToolsRequest
+		ListToolsRequest[T]
 }
 
 // ClientNotification is the interface constraint for all MPC client notifications.
 type ClientNotification[T ID] interface {
-	ProgressNotification[T] | InitializedNotification | RootsListChangedNotification
+	ProgressNotification[T] |
+		InitializedNotification |
+		RootsListChangedNotification
 }
 
 // ClientResult is the interface constraint for all MPC client results.
-type ClientResult[T SamplingMessageContent] interface {
-	Result | CreateMessageResult[T] | ListRootsResult
+type ClientResult interface {
+	Result | CreateMessageResult | ListRootsResult
 }
 
 // ServerRequest is the interface constraint for all MPC server requests.
-type ServerRequest[T ID, U SamplingMessageContent] interface {
-	PingRequest[T] | CreateMessageRequest[T, U] | ListRootsRequest[T]
+type ServerRequest[T ID] interface {
+	PingRequest[T] |
+		CreateMessageRequest[T] |
+		ListRootsRequest[T]
 }
 
 // ServerNotification is the interface constraint for all MPC server notifications.
@@ -58,43 +62,37 @@ type ServerNotification[T ID] interface {
 }
 
 // ServerResult is the interface constraint for all MPC server results.
-type ServerResult[T PromptMessageContent, U ReadResourceResultContent, V CallToolResultContent] interface {
+type ServerResult interface {
 	Result |
 		InitializeResult |
 		CompleteResult |
-		GetPromptResult[T] |
+		GetPromptResult |
 		ListPromptsResult |
 		ListResourcesResult |
 		ListResourceTemplatesResult |
-		ReadResourceResult[U] |
-		CallToolResult[V] |
+		ReadResourceResult |
+		CallToolResult |
 		ListToolsResult
 }
 
 // Client/Server generic constraintss
 
-type SendRequestT[T ID, U CompleteRequestParamsRef, V SamplingMessageContent] interface {
-	ClienRequest[T, U] | ServerRequest[T, V]
+type GenRequest[T ID] interface {
+	HasReqMethod
+	ClienRequest[T] | ServerRequest[T]
 }
 
-type SendResultT[T SamplingMessageContent, P PromptMessageContent, U ReadResourceResultContent, V CallToolResultContent] interface {
-	ClientResult[T] | ServerResult[P, U, V]
+type GenResult interface {
+	ClientResult | ServerResult
 }
 
-type SendNotificationT[T ID] interface {
+type GenNotification[T ID] interface {
+	HasReqMethod
 	ClientNotification[T] | ServerNotification[T]
 }
 
-type ReceiveRequestT[T ID, U CompleteRequestParamsRef, V SamplingMessageContent] interface {
-	ClienRequest[T, U] | ServerRequest[T, V]
-}
-
-type ReceiveResultT interface {
-	Result
-}
-
-type ReceiveNotificationT[T ID] interface {
-	ClientNotification[T] | ServerNotification[T]
+type HasReqMethod interface {
+	GetMethod() RequestMethod
 }
 
 // JSONRPCMessageType is used to identify JSONRPCM message type.
@@ -107,14 +105,9 @@ const (
 	JSONRPCErrorMsgType        JSONRPCMessageType = "error"
 )
 
-// JSONRPCMessageTyper is the interface for all JSON-RPC message types.
-type JSONRPCMessageTyper interface {
-	JSONRPCMessageType() JSONRPCMessageType
-}
-
 // A request that expects a response.
-type JSONRPCRequest[T ID] struct {
-	Request[T]
+type JSONRPCRequest[T ID, R GenRequest[T]] struct {
+	Request R `json:",inline"`
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
 	// Version corresponds to the JSON RPC Versiom.
@@ -123,12 +116,12 @@ type JSONRPCRequest[T ID] struct {
 }
 
 // Implement JSONRPCMessageTyper
-func (j JSONRPCRequest[T]) JSONRPCMessageType() JSONRPCMessageType {
+func (j JSONRPCRequest[T, R]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCRequestMsgType
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCRequest[T, R]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -146,7 +139,7 @@ func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCRequest: required")
 	}
-	var req JSONRPCRequest[T]
+	var req JSONRPCRequest[T, R]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -155,14 +148,14 @@ func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
 }
 
 // A notification which does not expect a response.
-type JSONRPCNotification struct {
-	Notification
+type JSONRPCNotification[T ID, N GenNotification[T]] struct {
+	Notification N `json:",inline"`
 	// Version corresponds to the JSON schema field "jsonrpc".
 	Version string `json:"jsonrpc"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCNotification[T, N]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -177,7 +170,7 @@ func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in JSONRPCNotification: required")
 	}
-	var n JSONRPCNotification
+	var n JSONRPCNotification[T, N]
 	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
@@ -186,22 +179,22 @@ func (j *JSONRPCNotification) UnmarshalJSON(b []byte) error {
 }
 
 // Implement JSONRPCMessageTyper
-func (j JSONRPCNotification) JSONRPCMessageType() JSONRPCMessageType {
+func (j JSONRPCNotification[T, N]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCNotificationMsgType
 }
 
 // A successful (non-error) response to a request.
-type JSONRPCResponse[T ID] struct {
+type JSONRPCResponse[T ID, R GenResult] struct {
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
 	// Version corresponds to the JSON schema field "jsonrpc".
 	Version string `json:"jsonrpc"`
 	// Result corresponds to the JSON schema field "result".
-	Result Result `json:"result"`
+	Result R `json:"result"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
+func (j *JSONRPCResponse[T, R]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -219,7 +212,7 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["result"]; raw != nil && !ok {
 		return fmt.Errorf("field result in JSONRPCResponse: required")
 	}
-	var resp JSONRPCResponse[T]
+	var resp JSONRPCResponse[T, R]
 	if err := json.Unmarshal(b, &resp); err != nil {
 		return err
 	}
@@ -228,7 +221,7 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 }
 
 // Implement JSONRPCMessageTyper
-func (j JSONRPCResponse[T]) JSONRPCMessageType() JSONRPCMessageType {
+func (j JSONRPCResponse[T, R]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCResponseMsgType
 }
 
@@ -447,15 +440,36 @@ func (j *CallToolRequest[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// NOTE: CallToolResultContent, because CallToolResultContent would
-// have to be generic and Go doesn't support nested generics, so
-// we are hacking around it by defining concrete types
-// for EmbeddedResources; this is a major hack, though so be warned!
-type TextEmbeddedResource = EmbeddedResource[TextResourceContents]
-type BlobEmbeddedResource = EmbeddedResource[BlobResourceContents]
+// NOTE: Go doesn't have sum types so this is a workaround for
+// TextContent | ImageContent | EmbeddedResource
+type CallToolResultContent struct {
+	TextContent      *TextContent
+	ImageContent     *ImageContent
+	EmbeddedResource *EmbeddedResource
+}
 
-type CallToolResultContent interface {
-	TextContent | ImageContent | TextEmbeddedResource | BlobEmbeddedResource
+func (c *CallToolResultContent) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var txt TextContent
+	if err := json.Unmarshal(data, &txt); err == nil && txt.Type == TextContentType {
+		c.TextContent = &txt
+		return nil
+	}
+
+	// Try ResourceReference
+	var img ImageContent
+	if err := json.Unmarshal(data, &img); err == nil && img.Type == ImageContentType {
+		c.ImageContent = &img
+		return nil
+	}
+
+	var res EmbeddedResource
+	if err := json.Unmarshal(data, &res); err == nil && res.Type == EmbeddedResourceType {
+		c.EmbeddedResource = &res
+		return nil
+	}
+
+	return fmt.Errorf("content matches neither of TextContent, ImageContent or EmbeddedResource")
 }
 
 // The server's response to a tool call.
@@ -468,71 +482,30 @@ type CallToolResultContent interface {
 // However, any errors in _finding_ the tool, an error indicating that the
 // server does not support tool calls, or any other exceptional conditions,
 // should be reported as an MCP error response.
-type CallToolResult[T CallToolResultContent] struct {
+type CallToolResult struct {
 	Result
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent | EmbeddedResource
-	Content []T `json:"content"`
+	Content []CallToolResultContent `json:"content"`
 	// Whether the tool call ended in an error.
 	// If not set, this is assumed to be false (the call was successful).
 	IsError *bool `json:"isError,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CallToolResult[T]) UnmarshalJSON(b []byte) error {
-	type Alias CallToolResult[T]
-	aux := &struct {
-		Content []json.RawMessage `json:"content"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
+func (j *CallToolResult) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-
-	if aux.Content == nil {
-		return fmt.Errorf("field content in CallToolResult: required")
+	if _, ok := raw["content"]; raw != nil && !ok {
+		return fmt.Errorf("field content in SamplingMessage: required")
 	}
-
-	j.Content = make([]T, len(aux.Content))
-	for i, raw := range aux.Content {
-		var text TextContent
-		if err := json.Unmarshal(raw, &text); err == nil {
-			if v, ok := any(&text).(T); ok {
-				j.Content[i] = v
-				continue
-			}
-		}
-
-		var image ImageContent
-		if err := json.Unmarshal(raw, &image); err == nil {
-			if v, ok := any(&image).(T); ok {
-				j.Content[i] = v
-				continue
-			}
-		}
-
-		// Handle specialized EmbeddedResource types
-		var textResource TextEmbeddedResource
-		if err := json.Unmarshal(raw, &textResource); err == nil {
-			if v, ok := any(&textResource).(T); ok {
-				j.Content[i] = v
-				continue
-			}
-		}
-
-		var blobResource BlobEmbeddedResource
-		if err := json.Unmarshal(raw, &blobResource); err == nil {
-			if v, ok := any(&blobResource).(T); ok {
-				j.Content[i] = v
-				continue
-			}
-		}
-
-		return fmt.Errorf("content at index %d matches neither TextContent, ImageContent, nor EmbeddedResource", i)
+	var c CallToolResult
+	if err := json.Unmarshal(b, &c); err != nil {
+		return err
 	}
+	*j = c
 
 	return nil
 }
@@ -674,65 +647,48 @@ const (
 	EmbeddedResourceType ContentType = "resource"
 )
 
-type CompleteRequestParamsRef interface {
-	PromptReference | ResourceReference
+// NOTE: Go doesn't have sum types so this is a workaround for
+// PromptReference | ResourceReference
+type CompleteRequestParamsRef struct {
+	PromptReference   *PromptReference
+	ResourceReference *ResourceReference
 }
 
-type CompleteRequestParams[T CompleteRequestParamsRef] struct {
+func (c *CompleteRequestParamsRef) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var p PromptReference
+	if err := json.Unmarshal(data, &p); err == nil && p.Type == PromptReferenceType {
+		c.PromptReference = &p
+		return nil
+	}
+
+	// Try ResourceReference
+	var r ResourceReference
+	if err := json.Unmarshal(data, &r); err == nil && r.Type == ResourceReferenceType {
+		c.ResourceReference = &r
+		return nil
+	}
+
+	return fmt.Errorf("invalid CompleteRequestParamsRef ype: %s", r.Type)
+}
+
+type CompleteRequestParams struct {
 	// Ref corresponds to the JSON schema field "ref".
 	// PromptReference | ResourceReference
-	Ref T `json:"ref"`
+	Ref CompleteRequestParamsRef `json:"ref"`
 	// The argument's information
 	Argument CompleteRequestParamsArgument `json:"argument"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *CompleteRequestParams[T]) UnmarshalJSON(b []byte) error {
-	type Alias CompleteRequestParams[T]
-	aux := &struct {
-		Ref json.RawMessage `json:"ref"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
-		return err
-	}
-
-	if aux.Ref == nil {
-		return fmt.Errorf("field ref in CompleteRequestParams: required")
-	}
-
-	// Try each possible ref type
-	var promptRef PromptReference
-	if err := json.Unmarshal(aux.Ref, &promptRef); err == nil {
-		if v, ok := any(&promptRef).(T); ok {
-			j.Ref = v
-			return nil
-		}
-	}
-
-	var resourceRef ResourceReference
-	if err := json.Unmarshal(aux.Ref, &resourceRef); err == nil {
-		if v, ok := any(&resourceRef).(T); ok {
-			j.Ref = v
-			return nil
-		}
-	}
-
-	return fmt.Errorf("ref matches neither PromptReference nor ResourceReference")
-}
-
 // A request from the client to the server, to ask for completion options.
-type CompleteRequest[T ID, U CompleteRequestParamsRef] struct {
+type CompleteRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
-	Params CompleteRequestParams[U] `json:"params"`
+	Params CompleteRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CompleteRequest[T, U]) UnmarshalJSON(b []byte) error {
+func (j *CompleteRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -747,7 +703,7 @@ func (j *CompleteRequest[T, U]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CompleteRequest: required")
 	}
-	var c CompleteRequest[T, U]
+	var c CompleteRequest[T]
 	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
@@ -811,29 +767,29 @@ func (j *CompleteResult) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type CreateMessageRequestParamsIncludeCtx string
+type CreateMsgReqParamsInclCtx string
 
 const (
-	CreateMessageRequestParamsIncludeCtxNone       CreateMessageRequestParamsIncludeCtx = "none"
-	CreateMessageRequestParamsIncludeCtxAllServers CreateMessageRequestParamsIncludeCtx = "allServers"
-	CreateMessageRequestParamsIncludeCtxThisServer CreateMessageRequestParamsIncludeCtx = "thisServer"
+	CreateMsgReqParamsInclCtxNone       CreateMsgReqParamsInclCtx = "none"
+	CreateMsgReqParamsInclCtxAllServers CreateMsgReqParamsInclCtx = "allServers"
+	CreateMsgReqParamsInclCtxThisServer CreateMsgReqParamsInclCtx = "thisServer"
 )
 
-var enumValuesCreateMessageRequestParamsIncludeCtx = map[CreateMessageRequestParamsIncludeCtx]struct{}{
-	CreateMessageRequestParamsIncludeCtxNone:       {},
-	CreateMessageRequestParamsIncludeCtxAllServers: {},
-	CreateMessageRequestParamsIncludeCtxThisServer: {},
+var enumValuesCreateMsgReqParamsInclCtx = map[CreateMsgReqParamsInclCtx]struct{}{
+	CreateMsgReqParamsInclCtxNone:       {},
+	CreateMsgReqParamsInclCtxAllServers: {},
+	CreateMsgReqParamsInclCtxThisServer: {},
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequestParamsIncludeCtx) UnmarshalJSON(b []byte) error {
+func (j *CreateMsgReqParamsInclCtx) UnmarshalJSON(b []byte) error {
 	var v string
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
-	ctx := CreateMessageRequestParamsIncludeCtx(v)
-	if _, valid := enumValuesCreateMessageRequestParamsIncludeCtx[ctx]; !valid {
-		return fmt.Errorf("invalid CreateMessageRequestParamsIncludeContext value: %v", ctx)
+	ctx := CreateMsgReqParamsInclCtx(v)
+	if _, valid := enumValuesCreateMsgReqParamsInclCtx[ctx]; !valid {
+		return fmt.Errorf("invalid CreateMsgReqParamsInclCtx value: %v", ctx)
 	}
 	*j = ctx
 	return nil
@@ -843,9 +799,9 @@ func (j *CreateMessageRequestParamsIncludeCtx) UnmarshalJSON(b []byte) error {
 // metadata is provider-specific.
 type CreateMessageRequestParamsMetadata map[string]any
 
-type CreateMessageRequestParams[T SamplingMessageContent] struct {
+type CreateMessageRequestParams struct {
 	// Messages corresponds to the JSON schema field "messages".
-	Messages []SamplingMessage[T] `json:"messages"`
+	Messages []SamplingMessage `json:"messages"`
 	// The server's preferences for which model to select. The client MAY ignore these
 	// preferences.
 	ModelPreferences *ModelPreferences `json:"modelPreferences,omitempty"`
@@ -854,7 +810,7 @@ type CreateMessageRequestParams[T SamplingMessageContent] struct {
 	SystemPrompt *string `json:"systemPrompt,omitempty"`
 	// A request to include context from one or more MCP servers (including the
 	// caller), to be attached to the prompt. The client MAY ignore this request.
-	IncludeContext *CreateMessageRequestParamsIncludeCtx `json:"includeContext,omitempty"`
+	IncludeContext *CreateMsgReqParamsInclCtx `json:"includeContext,omitempty"`
 	// Temperature corresponds to the JSON schema field "temperature".
 	Temperature *float64 `json:"temperature,omitempty"`
 	// The maximum number of tokens to sample, as requested by the server. The client
@@ -868,7 +824,7 @@ type CreateMessageRequestParams[T SamplingMessageContent] struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequestParams) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -879,7 +835,7 @@ func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in CreateMessageRequestParams: required")
 	}
-	var c CreateMessageRequestParams[T]
+	var c CreateMessageRequestParams
 	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
@@ -891,14 +847,14 @@ func (j *CreateMessageRequestParams[T]) UnmarshalJSON(b []byte) error {
 // discretion over which model to select. The client should also inform the user
 // before beginning sampling, to allow them to inspect the request (human in the
 // loop) and decide whether to approve it.
-type CreateMessageRequest[T ID, U SamplingMessageContent] struct {
+type CreateMessageRequest[T ID] struct {
 	Request[T]
 	// Params corresponds to the JSON schema field "params".
-	Params CreateMessageRequestParams[U] `json:"params"`
+	Params CreateMessageRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageRequest[T, U]) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -913,7 +869,7 @@ func (j *CreateMessageRequest[T, U]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in CreateMessageRequest: required")
 	}
-	var c CreateMessageRequest[T, U]
+	var c CreateMessageRequest[T]
 	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
@@ -925,17 +881,19 @@ func (j *CreateMessageRequest[T, U]) UnmarshalJSON(b []byte) error {
 // client should inform the user before returning the sampled message, to allow
 // them to inspect the response (human in the loop) and decide whether to allow the
 // server to see it.
-type CreateMessageResult[T SamplingMessageContent] struct {
+type CreateMessageResult struct {
 	Result
-	SamplingMessage[T]
+	Content SamplingMessageContent `json:"content"`
 	// The name of the model that generated the message.
 	Model string `json:"model"`
+	// Role corresponds to the JSON schema field "role".
+	Role Role `json:"role"`
 	// The reason why sampling stopped, if known.
 	StopReason *string `json:"stopReason,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
+func (j *CreateMessageResult) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -946,10 +904,18 @@ func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["model"]; raw != nil && !ok {
 		return fmt.Errorf("field model in CreateMessageResult: required")
 	}
-	if _, ok := raw["role"]; raw != nil && !ok {
-		return fmt.Errorf("field role in CreateMessageResult: required")
+	val, ok := raw["role"]
+	if !ok {
+		return fmt.Errorf("field role in SamplingMessage: required")
 	}
-	var c CreateMessageResult[T]
+	strVal, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("invalid field role in SamplingMessage: %v", strVal)
+	}
+	if _, valid := enumValuesRole[Role(strVal)]; !valid {
+		return fmt.Errorf("invalid SamplingMessage role value: %v", strVal)
+	}
+	var c CreateMessageResult
 	if err := json.Unmarshal(b, &c); err != nil {
 		return err
 	}
@@ -957,63 +923,68 @@ func (j *CreateMessageResult[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type EmbeddedResourceContent interface {
-	TextResourceContents | BlobResourceContents
+// NOTE: Go doesn't have sum types so this is a workaround for
+// TextResourceContents | BlobResourceContents
+type EmbeddedResourceContent struct {
+	TextResourceContents *TextResourceContents
+	BlobResourceContents *BlobResourceContents
+}
+
+func (c *EmbeddedResourceContent) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var txt TextResourceContents
+	if err := json.Unmarshal(data, &txt); err == nil {
+		c.TextResourceContents = &txt
+		return nil
+	}
+
+	// Try ResourceReference
+	var img BlobResourceContents
+	if err := json.Unmarshal(data, &img); err == nil {
+		c.BlobResourceContents = &img
+		return nil
+	}
+
+	return fmt.Errorf("resource matches neither TextResourceContents nor BlobResourceContents")
 }
 
 // The contents of a resource, embedded into a prompt or tool call result.
 // It is up to the client how best to render embedded resources for the benefit
 // of the LLM and/or the user.
-type EmbeddedResource[T EmbeddedResourceContent] struct {
+type EmbeddedResource struct {
 	Annotated
 	// Type corresponds to the JSON schema field "type".
 	Type ContentType `json:"type"`
 	// Resource corresponds to the JSON schema field "resource".
 	// TextResourceContents | BlobResourceContents
-	Resource T `json:"resource"`
+	Resource EmbeddedResourceContent `json:"resource"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *EmbeddedResource[T]) UnmarshalJSON(b []byte) error {
-	type Alias EmbeddedResource[T]
-	aux := &struct {
-		Resource json.RawMessage `json:"resource"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
+func (j *EmbeddedResource) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-
-	if aux.Resource == nil {
-		return fmt.Errorf("field resource in EmbeddedResource: required")
+	val, ok := raw["type"]
+	if !ok {
+		return fmt.Errorf("field type in EmbeddedResource: required")
 	}
-
+	strVal, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("invalid field type in EmbeddedResource: %v", strVal)
+	}
 	// Validate type is EmbeddedResourceType
-	if j.Type != EmbeddedResourceType {
+	if ContentType(strVal) != EmbeddedResourceType {
 		return fmt.Errorf("invalid field type in EmbeddedResource: %v", j.Type)
 	}
-
-	// Try each possible resource type
-	var text TextResourceContents
-	if err := json.Unmarshal(aux.Resource, &text); err == nil {
-		if v, ok := any(&text).(T); ok {
-			j.Resource = v
-			return nil
-		}
+	var res EmbeddedResource
+	if err := json.Unmarshal(b, &res); err != nil {
+		return err
 	}
+	*j = res
 
-	var blob BlobResourceContents
-	if err := json.Unmarshal(aux.Resource, &blob); err == nil {
-		if v, ok := any(&blob).(T); ok {
-			j.Resource = v
-			return nil
-		}
-	}
-
-	return fmt.Errorf("resource matches neither TextResourceContents nor BlobResourceContents")
+	return nil
 }
 
 // Arguments to use for templating the prompt.
@@ -1075,16 +1046,16 @@ func (j *GetPromptRequest[T]) UnmarshalJSON(b []byte) error {
 }
 
 // The server's response to a prompts/get request from the client.
-type GetPromptResult[T PromptMessageContent] struct {
+type GetPromptResult struct {
 	Result
 	// An optional description for the prompt.
 	Description *string `json:"description,omitempty"`
 	// Messages corresponds to the JSON schema field "messages".
-	Messages []PromptMessage[T] `json:"messages"`
+	Messages []PromptMessage `json:"messages"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *GetPromptResult[T]) UnmarshalJSON(b []byte) error {
+func (j *GetPromptResult) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1092,7 +1063,7 @@ func (j *GetPromptResult[T]) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["messages"]; raw != nil && !ok {
 		return fmt.Errorf("field messages in GetPromptResult: required")
 	}
-	var res GetPromptResult[T]
+	var res GetPromptResult
 	if err := json.Unmarshal(b, &res); err != nil {
 		return err
 	}
@@ -1105,8 +1076,7 @@ type ImageContent struct {
 	Annotated
 	// The base64-encoded image data.
 	Data string `json:"data"`
-	// The MIME type of the image. Different providers may support different image
-	// types.
+	// The MIME type of the image. Different providers may support different image types.
 	MimeType string `json:"mimeType"`
 	// Type corresponds to the JSON schema field "type".
 	Type ContentType `json:"type"`
@@ -1202,15 +1172,14 @@ func (j *InitializeRequestParams) UnmarshalJSON(b []byte) error {
 
 // This request is sent from the client to the server when it first connects,
 // asking it to begin initialization.
-type InitializeRequest struct {
-	// Method corresponds to the JSON schema field "method".
-	Method RequestMethod `json:"method"`
+type InitializeRequest[T ID] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params InitializeRequestParams `json:"params"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *InitializeRequest) UnmarshalJSON(b []byte) error {
+func (j *InitializeRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1225,7 +1194,7 @@ func (j *InitializeRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["params"]; raw != nil && !ok {
 		return fmt.Errorf("field params in InitializeRequest: required")
 	}
-	var req InitializeRequest
+	var req InitializeRequest[T]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -1236,9 +1205,7 @@ func (j *InitializeRequest) UnmarshalJSON(b []byte) error {
 // After receiving an initialize request from the client, the server sends this
 // response.
 type InitializeResult struct {
-	// This result property is reserved by the protocol to allow clients and servers
-	// to attach additional metadata to their responses.
-	Meta InitializeResultMeta `json:"_meta,omitempty"`
+	Result
 	// Capabilities corresponds to the JSON schema field "capabilities".
 	Capabilities ServerCapabilities `json:"capabilities"`
 	// Instructions describing how to use the server and its features.
@@ -1296,8 +1263,7 @@ type InitializedNotificationParamsMeta map[string]any
 // This notification is sent from the client to the server after initialization has
 // finished.
 type InitializedNotification struct {
-	// Method corresponds to the JSON schema field "method".
-	Method RequestMethod `json:"method"`
+	Notification
 	// Params corresponds to the JSON schema field "params".
 	Params *InitializedNotificationParams `json:"params,omitempty"`
 }
@@ -1325,12 +1291,12 @@ func (j *InitializedNotification) UnmarshalJSON(b []byte) error {
 
 // Sent from the client to request a list of prompts and prompt templates the
 // server has.
-type ListPromptsRequest struct {
-	PaginatedRequest
+type ListPromptsRequest[T ID] struct {
+	PaginatedRequest[T]
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ListPromptsRequest) UnmarshalJSON(b []byte) error {
+func (j *ListPromptsRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1342,7 +1308,7 @@ func (j *ListPromptsRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListPromptsRequestMethod {
 		return fmt.Errorf("invalid field method in ListPromptsRequest: %v", strVal)
 	}
-	var l ListPromptsRequest
+	var l ListPromptsRequest[T]
 	if err := json.Unmarshal(b, &l); err != nil {
 		return err
 	}
@@ -1375,12 +1341,12 @@ func (j *ListPromptsResult) UnmarshalJSON(b []byte) error {
 }
 
 // Sent from the client to request a list of resource templates the server has.
-type ListResourceTemplatesRequest struct {
-	PaginatedRequest
+type ListResourceTemplatesRequest[T ID] struct {
+	PaginatedRequest[T]
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ListResourceTemplatesRequest) UnmarshalJSON(b []byte) error {
+func (j *ListResourceTemplatesRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1392,7 +1358,7 @@ func (j *ListResourceTemplatesRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListResourceTemplRequestMethod {
 		return fmt.Errorf("invalid field method in ListResourceTemplatesRequest: %v", strVal)
 	}
-	var req ListResourceTemplatesRequest
+	var req ListResourceTemplatesRequest[T]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -1425,12 +1391,12 @@ func (j *ListResourceTemplatesResult) UnmarshalJSON(b []byte) error {
 }
 
 // Sent from the client to request a list of resources the server has.
-type ListResourcesRequest struct {
-	PaginatedRequest
+type ListResourcesRequest[T ID] struct {
+	PaginatedRequest[T]
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ListResourcesRequest) UnmarshalJSON(b []byte) error {
+func (j *ListResourcesRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1442,7 +1408,7 @@ func (j *ListResourcesRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListResourcesRequestMethod {
 		return fmt.Errorf("invalid field method in ListResourcesRequest: %v", strVal)
 	}
-	var req ListResourcesRequest
+	var req ListResourcesRequest[T]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -1537,12 +1503,12 @@ func (j *ListRootsResult) UnmarshalJSON(b []byte) error {
 }
 
 // Sent from the client to request a list of tools the server has.
-type ListToolsRequest struct {
-	PaginatedRequest
+type ListToolsRequest[T ID] struct {
+	PaginatedRequest[T]
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ListToolsRequest) UnmarshalJSON(b []byte) error {
+func (j *ListToolsRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1554,7 +1520,7 @@ func (j *ListToolsRequest) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || RequestMethod(strVal) != ListToolsRequestMethod {
 		return fmt.Errorf("invalid field method in ListToolsRequest: %v", strVal)
 	}
-	var req ListToolsRequest
+	var req ListToolsRequest[T]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -1807,21 +1773,26 @@ func (j *Notification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// GetMethod returns request method.
+// This is used for constraining generic types.
+func (j *Notification) GetMethod() RequestMethod {
+	return j.Method
+}
+
 type PaginatedRequestParams struct {
 	// An opaque token representing the current pagination position.
 	// If provided, the server should return results starting after this cursor.
 	Cursor *Cursor `json:"cursor,omitempty"`
 }
 
-type PaginatedRequest struct {
-	// Method corresponds to the JSON schema field "method".
-	Method RequestMethod `json:"method"`
+type PaginatedRequest[T ID] struct {
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params *PaginatedRequestParams `json:"params,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *PaginatedRequest) UnmarshalJSON(b []byte) error {
+func (j *PaginatedRequest[T]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -1829,7 +1800,7 @@ func (j *PaginatedRequest) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["method"]; raw != nil && !ok {
 		return fmt.Errorf("field method in PaginatedRequest: required")
 	}
-	var req PaginatedRequest
+	var req PaginatedRequest[T]
 	if err := json.Unmarshal(b, &req); err != nil {
 		return err
 	}
@@ -1840,16 +1811,14 @@ func (j *PaginatedRequest) UnmarshalJSON(b []byte) error {
 type PaginatedResult struct {
 	// This result property is reserved by the protocol to allow clients and servers
 	// to attach additional metadata to their responses.
-	Meta PaginatedResultMeta `json:"_meta,omitempty"`
+	Meta ResultMeta `json:"_meta,omitempty"`
+	// AdditionalProperties are reserved for future use.
+	AdditionalProperties any `json:",omitempty"`
 	// An opaque token representing the pagination position after the last returned
 	// result.
 	// If present, there may be more results available.
 	NextCursor *Cursor `json:"nextCursor,omitempty"`
 }
-
-// This result property is reserved by the protocol to allow clients and servers to
-// attach additional metadata to their responses.
-type PaginatedResultMeta map[string]any
 
 type PingRequestParams[T ID] struct {
 	// Meta corresponds to the JSON schema field "_meta".
@@ -1869,8 +1838,7 @@ type PingRequestParamsMeta[T ID] struct {
 // A ping, issued by either the server or the client, to check that the other party
 // is still alive. The receiver must promptly respond, or else may be disconnected.
 type PingRequest[T ID] struct {
-	// Method corresponds to the JSON schema field "method".
-	Method RequestMethod `json:"method"`
+	Request[T]
 	// Params corresponds to the JSON schema field "params".
 	Params *PingRequestParams[T] `json:"params,omitempty"`
 }
@@ -1930,8 +1898,7 @@ func (j *ProgressNotificationParams[T]) UnmarshalJSON(b []byte) error {
 // An out-of-band notification used to inform the receiver of a progress update for
 // a long-running request.
 type ProgressNotification[T ID] struct {
-	// Method corresponds to the JSON schema field "method".
-	Method RequestMethod `json:"method"`
+	Notification
 	// Params corresponds to the JSON schema field "params".
 	Params ProgressNotificationParams[T] `json:"params"`
 }
@@ -2042,78 +2009,75 @@ func (j *PromptListChangedNotification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type PromptMessageContent interface {
-	TextContent | ImageContent | TextEmbeddedResource | BlobEmbeddedResource
+// NOTE: Go doesn't have sum types so this is a workaround for
+// TextContent | ImageContent | EmbeddedResource
+type PromptMessageContent struct {
+	TextContent      *TextContent
+	ImageContent     *ImageContent
+	EmbeddedResource *EmbeddedResource
+}
+
+func (c *PromptMessageContent) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var txt TextContent
+	if err := json.Unmarshal(data, &txt); err == nil && txt.Type == TextContentType {
+		c.TextContent = &txt
+		return nil
+	}
+
+	// Try ResourceReference
+	var img ImageContent
+	if err := json.Unmarshal(data, &img); err == nil && img.Type == ImageContentType {
+		c.ImageContent = &img
+		return nil
+	}
+
+	var res EmbeddedResource
+	if err := json.Unmarshal(data, &res); err == nil && res.Type == EmbeddedResourceType {
+		c.EmbeddedResource = &res
+		return nil
+	}
+
+	return fmt.Errorf("content matches neither of TextContent, ImageContent or EmbeddedResource")
 }
 
 // Describes a message returned as part of a prompt.
 // This is similar to `SamplingMessage`, but also supports the embedding of
 // resources from the MCP server.
-type PromptMessage[T PromptMessageContent] struct {
+type PromptMessage struct {
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent | EmbeddedResource
-	Content T `json:"content"`
+	Content PromptMessageContent `json:"content"`
 }
 
-func (j *PromptMessage[T]) UnmarshalJSON(b []byte) error {
-	type Alias PromptMessage[T]
-	aux := &struct {
-		Content json.RawMessage `json:"content"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
+func (j *PromptMessage) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-
-	if aux.Content == nil {
-		return fmt.Errorf("field content in PromptMessage: required")
+	if _, ok := raw["content"]; raw != nil && !ok {
+		return fmt.Errorf("field content in SamplingMessage: required")
 	}
-
-	if _, valid := enumValuesRole[aux.Role]; !valid {
-		return fmt.Errorf("invalid role value: %v", aux.Role)
+	val, ok := raw["role"]
+	if !ok {
+		return fmt.Errorf("field role in SamplingMessage: required")
 	}
-	j.Role = aux.Role
-
-	// Try each possible content type
-	var text TextContent
-	if err := json.Unmarshal(aux.Content, &text); err == nil {
-		if v, ok := any(&text).(T); ok {
-			j.Content = v
-			return nil
-		}
+	strVal, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("invalid field role in SamplingMessage: %v", strVal)
 	}
-
-	var image ImageContent
-	if err := json.Unmarshal(aux.Content, &image); err == nil {
-		if v, ok := any(&image).(T); ok {
-			j.Content = v
-			return nil
-		}
+	if _, valid := enumValuesRole[Role(strVal)]; !valid {
+		return fmt.Errorf("invalid SamplingMessage role value: %v", strVal)
 	}
-
-	// Handle specialized EmbeddedResource types
-	var textResource TextEmbeddedResource
-	if err := json.Unmarshal(aux.Content, &textResource); err == nil {
-		if v, ok := any(&textResource).(T); ok {
-			j.Content = v
-			return nil
-		}
+	var p PromptMessage
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
 	}
+	*j = p
 
-	var blobResource BlobEmbeddedResource
-	if err := json.Unmarshal(aux.Content, &blobResource); err == nil {
-		if v, ok := any(&blobResource).(T); ok {
-			j.Content = v
-			return nil
-		}
-	}
-
-	return fmt.Errorf("content matches neither TextContent, ImageContent, nor EmbeddedResource")
+	return nil
 }
 
 // Identifies a prompt.
@@ -2174,6 +2138,7 @@ func (j *ReadResourceRequestParams) UnmarshalJSON(b []byte) error {
 // Sent from the client to the server, to read a specific resource URI.
 type ReadResourceRequest[T ID] struct {
 	Request[T]
+	// Padams for the request
 	Params *ReadResourceRequestParams `json:"params,omitempty"`
 }
 
@@ -2201,56 +2166,53 @@ func (j *ReadResourceRequest[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type ReadResourceResultContent interface {
-	TextResourceContents | BlobResourceContents
+// NOTE: Go doesn't have sum types so this is a workaround for
+// TextResourceContents | BlobResourceContents
+type ReadResourceResultContent struct {
+	TextResourceContents *TextResourceContents
+	BlobResourceContents *BlobResourceContents
+}
+
+func (c *ReadResourceResultContent) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var txt TextResourceContents
+	if err := json.Unmarshal(data, &txt); err == nil {
+		c.TextResourceContents = &txt
+		return nil
+	}
+
+	// Try ResourceReference
+	var blob BlobResourceContents
+	if err := json.Unmarshal(data, &blob); err == nil {
+		c.BlobResourceContents = &blob
+		return nil
+	}
+
+	return fmt.Errorf("content matches neither TextResourceContents nor BlobResourceContents")
 }
 
 // The server's response to a resources/read request from the client.
-type ReadResourceResult[T ReadResourceResultContent] struct {
+type ReadResourceResult struct {
 	Result
 	// Contents corresponds to the JSON schema field "contents".
 	// TextResourceContents | BlobResourceContents
-	Contents []T `json:"contents"`
+	Contents []ReadResourceResultContent `json:"contents"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ReadResourceResult[T]) UnmarshalJSON(b []byte) error {
-	type Alias ReadResourceResult[T]
-	aux := &struct {
-		Contents []json.RawMessage `json:"contents"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
+func (j *ReadResourceResult) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-
-	if aux.Contents == nil {
-		return fmt.Errorf("field contents in ReadResourceResult: required")
+	if _, ok := raw["contents"]; raw != nil && !ok {
+		return fmt.Errorf("field content in SamplingMessage: required")
 	}
-
-	j.Contents = make([]T, len(aux.Contents))
-	for i, raw := range aux.Contents {
-		var text TextResourceContents
-		if err := json.Unmarshal(raw, &text); err == nil {
-			if v, ok := any(&text).(T); ok {
-				j.Contents[i] = v
-				continue
-			}
-		}
-
-		var blob BlobResourceContents
-		if err := json.Unmarshal(raw, &blob); err == nil {
-			if v, ok := any(&blob).(T); ok {
-				j.Contents[i] = v
-				continue
-			}
-		}
-
-		return fmt.Errorf("content at index %d matches neither type", i)
+	var r ReadResourceResult
+	if err := json.Unmarshal(b, &r); err != nil {
+		return err
 	}
+	*j = r
 
 	return nil
 }
@@ -2343,6 +2305,12 @@ func (j *Request[T]) UnmarshalJSON(b []byte) error {
 	}
 	*j = req
 	return nil
+}
+
+// GetMethod returns request method.
+// This is used for constraining generic types.
+func (j *Request[T]) GetMethod() RequestMethod {
+	return j.Method
 }
 
 // A known resource that the server is capable of reading.
@@ -2662,60 +2630,67 @@ func (j *RootsListChangedNotification) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type SamplingMessageContent interface {
-	TextContent | ImageContent
+// NOTE: Go doesn't have sum types so this is a workaround for
+// TextContent | ImageContent
+type SamplingMessageContent struct {
+	TextContent  *TextContent
+	ImageContent *ImageContent
+}
+
+func (c *SamplingMessageContent) UnmarshalJSON(data []byte) error {
+	// Try PromptReference
+	var txt TextContent
+	if err := json.Unmarshal(data, &txt); err == nil && txt.Type == TextContentType {
+		c.TextContent = &txt
+		return nil
+	}
+
+	// Try ResourceReference
+	var img ImageContent
+	if err := json.Unmarshal(data, &img); err == nil && img.Type == ImageContentType {
+		c.ImageContent = &img
+		return nil
+	}
+
+	return fmt.Errorf("content matches neither TextContent nor ImageContent")
 }
 
 // Describes a message issued to or received from an LLM API.
-type SamplingMessage[T SamplingMessageContent] struct {
+type SamplingMessage struct {
 	// Role corresponds to the JSON schema field "role".
 	Role Role `json:"role"`
 	// Content corresponds to the JSON schema field "content".
 	// TextContent | ImageContent
-	Content T `json:"content"`
+	Content SamplingMessageContent `json:"content"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *SamplingMessage[T]) UnmarshalJSON(b []byte) error {
-	type Alias SamplingMessage[T]
-	aux := &struct {
-		Content json.RawMessage `json:"content"`
-		*Alias
-	}{
-		Alias: (*Alias)(j),
-	}
-
-	if err := json.Unmarshal(b, aux); err != nil {
+func (j *SamplingMessage) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-
-	if aux.Content == nil {
+	if _, ok := raw["content"]; raw != nil && !ok {
 		return fmt.Errorf("field content in SamplingMessage: required")
 	}
-
-	if _, valid := enumValuesRole[aux.Role]; !valid {
-		return fmt.Errorf("invalid role value: %v", aux.Role)
+	val, ok := raw["role"]
+	if !ok {
+		return fmt.Errorf("field role in SamplingMessage: required")
 	}
-	j.Role = aux.Role
-
-	// Try each possible content type
-	var text TextContent
-	if err := json.Unmarshal(aux.Content, &text); err == nil {
-		if v, ok := any(&text).(T); ok {
-			j.Content = v
-			return nil
-		}
+	strVal, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("invalid field role in SamplingMessage: %v", strVal)
 	}
-
-	var image ImageContent
-	if err := json.Unmarshal(aux.Content, &image); err == nil {
-		if v, ok := any(&image).(T); ok {
-			j.Content = v
-			return nil
-		}
+	if _, valid := enumValuesRole[Role(strVal)]; !valid {
+		return fmt.Errorf("invalid SamplingMessage role value: %v", strVal)
 	}
+	var s SamplingMessage
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*j = s
 
-	return fmt.Errorf("content matches neither TextContent nor ImageContent")
+	return nil
 }
 
 // Capabilities that a server may support. Known capabilities are defined here, in
