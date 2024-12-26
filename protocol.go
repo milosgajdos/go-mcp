@@ -384,7 +384,7 @@ func (p *Protocol[T, RQ, NF, RS]) handleResponse(ctx context.Context, resp *JSON
 
 func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRPCRequest[T, RQ]) {
 	p.handlersMu.RLock()
-	handler, ok := p.handlers[req.Request.GetMethod()]
+	handler, ok := p.handlers[req.GetMethod()]
 	p.handlersMu.RUnlock()
 
 	if !ok {
@@ -464,7 +464,7 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 
 func (p *Protocol[T, RQ, NF, RS]) handleNotification(ctx context.Context, n *JSONRPCNotification[T, NF]) {
 	p.notifyMu.RLock()
-	handler, ok := p.notify[n.Notification.GetMethod()]
+	handler, ok := p.notify[n.GetMethod()]
 	p.notifyMu.RUnlock()
 
 	if ok {
