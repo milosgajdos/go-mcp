@@ -15,7 +15,7 @@ const (
 	DefaultReqTimeout = 60 * time.Second
 	// DefaultRespTimeout is set to 30s.
 	DefaultRespTimeout = 60 * time.Second
-	// handleTimeout sets max time to handle RPC message
+	// RPCHandleTimeout sets max timeout to handle ia JSON RPC message.
 	RPCHandleTimeout = 60 * time.Second
 )
 
@@ -50,14 +50,14 @@ func DefaultOptions() Options {
 	}
 }
 
-// WithReqTimeout sets request timeout option
+// WithReqTimeout sets request timeout option.
 func WithReqTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		o.ReqTimeout = timeout
 	}
 }
 
-// WithRespTimeout sets request timeout option
+// WithRespTimeout sets request timeout option.
 func WithRespTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		o.RespTimeout = timeout
@@ -153,6 +153,14 @@ func (p *Protocol[T, RQ, NF, RS]) Connect() error {
 		return ErrInvalidTransport
 	}
 
+	if err := p.ctx.Err(); err != nil {
+		// protocol has been closed
+		if err == context.Canceled {
+			p.ctx, p.cancel = context.WithCancel(context.Background())
+		}
+		return err
+	}
+
 	go p.recvMsg()
 
 	return nil
@@ -160,7 +168,8 @@ func (p *Protocol[T, RQ, NF, RS]) Connect() error {
 
 // Close terminates the protocol and its transport.
 func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
-	p.cancel()
+	defer p.running.Store(false)
+	defer p.cancel()
 
 	p.pendingMu.Lock()
 	defer p.pendingMu.Unlock()
@@ -172,6 +181,8 @@ func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
 	}
 
 	// notify all pending requests
+	// NOTE: if we got here, the transport has been closed
+	// so sending anything down its pipes will fail.
 	for reqID, ch := range p.pending {
 		errResp := &JSONRPCError[T]{
 			ID:      reqID,
@@ -181,14 +192,10 @@ func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
 				Message: ErrTransportClosed.Error(),
 			},
 		}
-		if err := p.sendResponse(ctx, errResp); err != nil {
-			errResp.Err.Code = JSONRPCInternalError
-			errResp.Err.Message = err.Error()
-			select {
-			case ch <- RespOrError[T, RS]{Err: errResp}:
-			case <-p.ctx.Done():
-			case <-ctx.Done():
-			}
+		select {
+		case ch <- RespOrError[T, RS]{Err: errResp}:
+		case <-p.ctx.Done():
+		case <-ctx.Done():
 		}
 		delete(p.pending, reqID)
 	}
@@ -294,7 +301,6 @@ func (p *Protocol[T, RQ, NF, RS]) RegisterNotificationHandler(method RequestMeth
 
 // recvMsg handles incoming messages from the transport
 func (p *Protocol[T, RQ, NF, RS]) recvMsg() {
-	// reset the connected bit
 	defer p.running.Store(false)
 
 	for {
