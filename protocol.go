@@ -5,18 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 const (
-	// DefaultReqTimeout is set to 30s.
+	// DefaultReqTimeout sets max timeout for sending a JSON RPC request.
 	DefaultReqTimeout = 60 * time.Second
-	// DefaultRespTimeout is set to 30s.
+	// DefaultRespTimeout sets max timeout for receiving a JSON RPC response.
 	DefaultRespTimeout = 60 * time.Second
-	// handleTimeout sets max time to handle RPC message
+	// RPCHandleTimeout sets max timeout for handling a SON RPC message.
 	RPCHandleTimeout = 60 * time.Second
+	// WaitTimeout sets max wait timeout for a JSON RPC message to be picked up.
+	WaitTimeout = 500 * time.Millisecond
 )
 
 var (
@@ -50,14 +53,14 @@ func DefaultOptions() Options {
 	}
 }
 
-// WithReqTimeout sets request timeout option
+// WithReqTimeout sets request timeout option.
 func WithReqTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		o.ReqTimeout = timeout
 	}
 }
 
-// WithRespTimeout sets request timeout option
+// WithRespTimeout sets request timeout option.
 func WithRespTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		o.RespTimeout = timeout
@@ -153,6 +156,15 @@ func (p *Protocol[T, RQ, NF, RS]) Connect() error {
 		return ErrInvalidTransport
 	}
 
+	if err := p.ctx.Err(); err != nil {
+		switch err {
+		case context.Canceled: // protocol has been closed
+			p.ctx, p.cancel = context.WithCancel(context.Background())
+		default: // some other context error
+			return err
+		}
+	}
+
 	go p.recvMsg()
 
 	return nil
@@ -160,7 +172,8 @@ func (p *Protocol[T, RQ, NF, RS]) Connect() error {
 
 // Close terminates the protocol and its transport.
 func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
-	p.cancel()
+	defer p.running.Store(false)
+	defer p.cancel()
 
 	p.pendingMu.Lock()
 	defer p.pendingMu.Unlock()
@@ -172,6 +185,8 @@ func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
 	}
 
 	// notify all pending requests
+	// NOTE: if we got here, the transport has been closed
+	// so sending anything down its pipes will fail.
 	for reqID, ch := range p.pending {
 		errResp := &JSONRPCError[T]{
 			ID:      reqID,
@@ -181,14 +196,13 @@ func (p *Protocol[T, RQ, NF, RS]) Close(ctx context.Context) error {
 				Message: ErrTransportClosed.Error(),
 			},
 		}
-		if err := p.sendResponse(ctx, errResp); err != nil {
-			errResp.Err.Code = JSONRPCInternalError
-			errResp.Err.Message = err.Error()
-			select {
-			case ch <- RespOrError[T, RS]{Err: errResp}:
-			case <-p.ctx.Done():
-			case <-ctx.Done():
-			}
+		select {
+		case ch <- RespOrError[T, RS]{Err: errResp}:
+		case <-p.ctx.Done():
+		case <-ctx.Done():
+		case <-time.After(WaitTimeout):
+			// response failed to be consumed
+			// TODO: we should log something here
 		}
 		delete(p.pending, reqID)
 	}
@@ -294,7 +308,6 @@ func (p *Protocol[T, RQ, NF, RS]) RegisterNotificationHandler(method RequestMeth
 
 // recvMsg handles incoming messages from the transport
 func (p *Protocol[T, RQ, NF, RS]) recvMsg() {
-	// reset the connected bit
 	defer p.running.Store(false)
 
 	for {
@@ -309,6 +322,9 @@ func (p *Protocol[T, RQ, NF, RS]) recvMsg() {
 			if err != nil {
 				select {
 				case p.errChan <- fmt.Errorf("receive message: %w", err):
+					continue
+				case <-time.After(WaitTimeout):
+					log.Printf("receive message: %v", err)
 					continue
 				case <-p.ctx.Done():
 					return
@@ -342,6 +358,8 @@ func (p *Protocol[T, RQ, NF, RS]) handleError(ctx context.Context, err *JSONRPCE
 	if ok {
 		select {
 		case ch <- RespOrError[T, RS]{Err: err}:
+		case <-time.After(WaitTimeout):
+			log.Printf("handle RPC error timeout: %v", err)
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -356,6 +374,8 @@ func (p *Protocol[T, RQ, NF, RS]) handleResponse(ctx context.Context, resp *JSON
 	if ok {
 		select {
 		case ch <- RespOrError[T, RS]{Resp: resp}:
+		case <-time.After(WaitTimeout):
+			log.Print("handle RPC response timeout")
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -367,8 +387,6 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 	handler, ok := p.handlers[req.Request.GetMethod()]
 	p.handlersMu.RUnlock()
 
-	// No handler exists for this method
-	// We must send JSONRPCMethodNotFoundError
 	if !ok {
 		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
@@ -383,6 +401,8 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 			errResp.Err.Message = err.Error()
 			select {
 			case p.errChan <- err:
+			case <-time.After(WaitTimeout):
+				log.Printf("handle RPC request error timeout: %v", err)
 			case <-p.ctx.Done():
 			case <-ctx.Done():
 			}
@@ -400,7 +420,7 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 				Message: err.Error(),
 			},
 		}
-		// If it's a context error, let's create a nre context.
+		// If it's a context error, let's create a new context.
 		if ctx.Err() != nil {
 			ctx = context.Background()
 		}
@@ -408,6 +428,8 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 			errResp.Err.Message = fmt.Sprintf("%s: %v", errResp.Err, err)
 			select {
 			case p.errChan <- errResp:
+			case <-time.After(WaitTimeout):
+				log.Printf("handle RPC request error timeout: %v", err)
 			case <-p.ctx.Done():
 			case <-ctx.Done():
 			}
@@ -432,6 +454,8 @@ func (p *Protocol[T, RQ, NF, RS]) handleRequest(ctx context.Context, req *JSONRP
 		}
 		select {
 		case p.errChan <- errResp:
+		case <-time.After(WaitTimeout):
+			log.Printf("handle RPC request error timeout: %v", err)
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -454,7 +478,6 @@ func (p *Protocol[T, RQ, NF, RS]) handleNotification(ctx context.Context, n *JSO
 // handleMessage processes a received JSON RPC message.
 // NOTE: msg:  JSONRPCRequest | JSONRPCNotification | JSONRPCResponse | JSONRPCError
 func (p *Protocol[T, RQ, NF, RS]) handleMessage(msg []byte) {
-	// Create request-specific context
 	ctx, cancel := context.WithTimeout(context.Background(), RPCHandleTimeout)
 	defer cancel()
 
@@ -484,10 +507,10 @@ func (p *Protocol[T, RQ, NF, RS]) handleMessage(msg []byte) {
 	}
 
 	// If we get here, the message wasn't valid JSON-RPC
-	// TODO: consider adding some timeout here as we might be
-	// blocking here on errChan send
 	select {
 	case p.errChan <- ErrInvalidMessage:
+	case <-time.After(WaitTimeout):
+		log.Printf("handle RPC message timeout")
 	case <-p.ctx.Done():
 	}
 }

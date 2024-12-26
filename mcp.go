@@ -15,8 +15,8 @@ type JSONRPCMessage[T ID, NF GenNotification[T], RQ GenRequest[T], RS GenResult]
 	JSONRPCRequest[T, RQ] | JSONRPCNotification[T, NF] | JSONRPCResponse[T, RS] | JSONRPCError[T]
 }
 
-// ClienRequest is the interface constraint for all MPC client requests.
-type ClienRequest[T ID] interface {
+// ClientRequest is the interface constraint for all MPC client requests.
+type ClientRequest[T ID] interface {
 	PingRequest[T] |
 		InitializeRequest[T] |
 		CompleteRequest[T] |
@@ -79,7 +79,7 @@ type ServerResult interface {
 
 type GenRequest[T ID] interface {
 	HasReqMethod
-	ClienRequest[T] | ServerRequest[T]
+	ClientRequest[T] | ServerRequest[T]
 }
 
 type GenResult interface {
