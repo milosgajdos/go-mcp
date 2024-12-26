@@ -12,7 +12,10 @@ const (
 
 // JSONRPCMessage is the interface constraint for all JSON-RPC message types.
 type JSONRPCMessage[T ID, NF GenNotification[T], RQ GenRequest[T], RS GenResult] interface {
-	JSONRPCRequest[T, RQ] | JSONRPCNotification[T, NF] | JSONRPCResponse[T, RS] | JSONRPCError[T]
+	JSONRPCRequest[T, RQ] |
+		JSONRPCNotification[T, NF] |
+		JSONRPCResponse[T, RS] |
+		JSONRPCError[T]
 }
 
 // ClientRequest is the interface constraint for all MPC client requests.
@@ -41,7 +44,10 @@ type ClientNotification[T ID] interface {
 
 // ClientResult is the interface constraint for all MPC client results.
 type ClientResult interface {
-	Result | CreateMessageResult | ListRootsResult
+	PaginatedResult |
+		Result |
+		CreateMessageResult |
+		ListRootsResult
 }
 
 // ServerRequest is the interface constraint for all MPC server requests.
@@ -63,7 +69,8 @@ type ServerNotification[T ID] interface {
 
 // ServerResult is the interface constraint for all MPC server results.
 type ServerResult interface {
-	Result |
+	PaginatedResult |
+		Result |
 		InitializeResult |
 		CompleteResult |
 		GetPromptResult |
@@ -120,6 +127,10 @@ func (j JSONRPCRequest[T, R]) JSONRPCMessageType() JSONRPCMessageType {
 	return JSONRPCRequestMsgType
 }
 
+func (j JSONRPCRequest[T, R]) GetMethod() RequestMethod {
+	return j.Request.GetMethod()
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *JSONRPCRequest[T, R]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
@@ -154,6 +165,15 @@ type JSONRPCNotification[T ID, N GenNotification[T]] struct {
 	Version string `json:"jsonrpc"`
 }
 
+// Implement JSONRPCMessageTyper
+func (j JSONRPCNotification[T, N]) JSONRPCMessageType() JSONRPCMessageType {
+	return JSONRPCNotificationMsgType
+}
+
+func (j JSONRPCNotification[T, R]) GetMethod() RequestMethod {
+	return j.Notification.GetMethod()
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *JSONRPCNotification[T, N]) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
@@ -176,11 +196,6 @@ func (j *JSONRPCNotification[T, N]) UnmarshalJSON(b []byte) error {
 	}
 	*j = n
 	return nil
-}
-
-// Implement JSONRPCMessageTyper
-func (j JSONRPCNotification[T, N]) JSONRPCMessageType() JSONRPCMessageType {
-	return JSONRPCNotificationMsgType
 }
 
 // A successful (non-error) response to a request.
