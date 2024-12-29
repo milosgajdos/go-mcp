@@ -6,42 +6,27 @@ import (
 	"sync"
 )
 
-type ClientRequestT[T ID] interface {
-	HasReqMethod
-	ClientRequest[T]
-}
-
-type ClientNotificationT[T ID] interface {
-	HasReqMethod
-	ClientNotification[T]
-}
-
-type Client[T ID, RQ ClientRequestT[T], NF ClientNotificationT[T], RS ClientResult] struct {
-	protocol           *Protocol[T, RQ, NF, RS]
+type Client[T ID] struct {
+	protocol           *Protocol[T]
 	serverVersion      Implementation
 	serverCapabilities ServerCapabilities
 	mu                 sync.Mutex
 }
 
 // NewClient initializes a new MCP client.
-func NewClient[
-	T ID,
-	RQ ClientRequestT[T],
-	NF ClientNotificationT[T],
-	RS ClientResult,
-](transport Transport) (*Client[T, RQ, NF, RS], error) {
+func NewClient[T ID](transport Transport) (*Client[T], error) {
 	if transport == nil {
 		return nil, ErrInvalidTransport
 	}
 
-	protocol := NewProtocol[T, RQ, NF, RS](transport)
-	return &Client[T, RQ, NF, RS]{
+	protocol := NewProtocol[T](transport)
+	return &Client[T]{
 		protocol: protocol,
 	}, nil
 }
 
 // Connect establishes a connection and initializes the client.
-func (c *Client[T, RQ, NF, RS]) Connect(ctx context.Context, clientInfo Implementation) error {
+func (c *Client[T]) Connect(ctx context.Context, clientInfo Implementation) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -49,18 +34,16 @@ func (c *Client[T, RQ, NF, RS]) Connect(ctx context.Context, clientInfo Implemen
 		return err
 	}
 
-	initReq := InitializeRequest[T]{
-		Request: Request[T]{
-			Method: InitializeRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &InitializeRequest[T]{
+			Request: Request[T]{
+				Method: InitializeRequestMethod,
+			},
+			Params: InitializeRequestParams{
+				ProtocolVersion: LatestVersion,
+				ClientInfo:      clientInfo,
+			},
 		},
-		Params: InitializeRequestParams{
-			ProtocolVersion: JSONRPCVersion,
-			ClientInfo:      clientInfo,
-		},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(initReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -76,16 +59,15 @@ func (c *Client[T, RQ, NF, RS]) Connect(ctx context.Context, clientInfo Implemen
 	c.serverCapabilities = res.Capabilities
 	c.serverVersion = res.ServerInfo
 
-	initNotif := InitializedNotification{
-		Notification: Notification{
-			Method: InitializedNotificationMethod,
+	notif := &JSONRPCNotification[T]{
+		Notification: &InitializedNotification{
+			Notification: Notification{
+				Method: InitializedNotificationMethod,
+			},
 		},
+		Version: JSONRPCVersion,
 	}
 
-	notif := &JSONRPCNotification[T, NF]{
-		Notification: any(initNotif).(NF),
-		Version:      JSONRPCVersion,
-	}
 	if err := c.protocol.SendNotification(ctx, notif); err != nil {
 		return fmt.Errorf("failed to send initialized notification: %w", err)
 	}
@@ -94,21 +76,20 @@ func (c *Client[T, RQ, NF, RS]) Connect(ctx context.Context, clientInfo Implemen
 }
 
 // // assertCapability ensures the server supports a required capability.
-// func (c *Client[T, RQ, NF, RS]) assertCapability(capability, method string) {
+// func (c *Client[T]) assertCapability(capability, method string) {
 // 	if _, ok := c.serverCapabilities[capability]; !ok {
 // 		panic(fmt.Sprintf("server does not support %s (required for %s)", capability, method))
 // 	}
 // }
 
 // Ping sends a ping request.
-func (c *Client[T, RQ, NF, RS]) Ping(ctx context.Context) error {
-	pingReq := PingRequest[T]{
-		Request: Request[T]{
-			Method: PingRequestMethod,
+func (c *Client[T]) Ping(ctx context.Context) error {
+	req := &JSONRPCRequest[T]{
+		Request: &PingRequest[T]{
+			Request: Request[T]{
+				Method: PingRequestMethod,
+			},
 		},
-	}
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(pingReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -117,17 +98,16 @@ func (c *Client[T, RQ, NF, RS]) Ping(ctx context.Context) error {
 }
 
 // Complete sends a completion request.
-func (c *Client[T, RQ, NF, RS]) Complete(ctx context.Context, params CompleteRequestParams) (CompleteResult, error) {
+func (c *Client[T]) Complete(ctx context.Context, params CompleteRequestParams) (CompleteResult, error) {
 	// c.assertCapability("prompts", CompletionRequestMethod)
 
-	compReq := CompleteRequest[T]{
-		Request: Request[T]{
-			Method: CompleteRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &CompleteRequest[T]{
+			Request: Request[T]{
+				Method: CompleteRequestMethod,
+			},
+			Params: params,
 		},
-		Params: params,
-	}
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(compReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -140,20 +120,16 @@ func (c *Client[T, RQ, NF, RS]) Complete(ctx context.Context, params CompleteReq
 }
 
 // ListPrompts retrieves a list of available prompts.
-func (c *Client[T, RQ, NF, RS]) ListPrompts(ctx context.Context, params *PaginatedRequestParams) (ListPromptsResult, error) {
+func (c *Client[T]) ListPrompts(ctx context.Context, params *PaginatedRequestParams) (ListPromptsResult, error) {
 	// c.assertCapability("prompts", ListPromptsRequestMethod)
 
-	listReq := ListPromptsRequest[T]{
-		PaginatedRequest: PaginatedRequest[T]{
+	req := &JSONRPCRequest[T]{
+		Request: &ListPromptsRequest[T]{
 			Request: Request[T]{
 				Method: ListPromptsRequestMethod,
 			},
 			Params: params,
 		},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(listReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -166,18 +142,16 @@ func (c *Client[T, RQ, NF, RS]) ListPrompts(ctx context.Context, params *Paginat
 }
 
 // GetPrompt retrieves a specific prompt.
-func (c *Client[T, RQ, NF, RS]) GetPrompt(ctx context.Context, params GetPromptRequestParams) (GetPromptResult, error) {
+func (c *Client[T]) GetPrompt(ctx context.Context, params GetPromptRequestParams) (GetPromptResult, error) {
 	// c.assertCapability("prompts", GetPromptRequestMethod)
 
-	promptReq := GetPromptRequest[T]{
-		Request: Request[T]{
-			Method: GetPromptRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &GetPromptRequest[T]{
+			Request: Request[T]{
+				Method: GetPromptRequestMethod,
+			},
+			Params: params,
 		},
-		Params: params,
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(promptReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -190,20 +164,16 @@ func (c *Client[T, RQ, NF, RS]) GetPrompt(ctx context.Context, params GetPromptR
 }
 
 // ListResources retrieves a list of resources.
-func (c *Client[T, RQ, NF, RS]) ListResources(ctx context.Context, params *PaginatedRequestParams) (ListResourcesResult, error) {
+func (c *Client[T]) ListResources(ctx context.Context, params *PaginatedRequestParams) (ListResourcesResult, error) {
 	// c.assertCapability("resources", ListResourcesRequestMethod)
 
-	listReq := ListPromptsRequest[T]{
-		PaginatedRequest: PaginatedRequest[T]{
+	req := &JSONRPCRequest[T]{
+		Request: &ListPromptsRequest[T]{
 			Request: Request[T]{
 				Method: ListResourcesRequestMethod,
 			},
 			Params: params,
 		},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(listReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -215,20 +185,16 @@ func (c *Client[T, RQ, NF, RS]) ListResources(ctx context.Context, params *Pagin
 	return any(resp.Result).(ListResourcesResult), nil
 }
 
-func (c *Client[T, RQ, NF, RS]) ListResourceTemplatesRequest(ctx context.Context, params *PaginatedRequestParams) (ListResourceTemplatesResult, error) {
+func (c *Client[T]) ListResourceTemplatesRequest(ctx context.Context, params *PaginatedRequestParams) (ListResourceTemplatesResult, error) {
 	// c.assertCapability("resources", ListResourceTemplRequestMethod)
 
-	listReq := ListPromptsRequest[T]{
-		PaginatedRequest: PaginatedRequest[T]{
+	req := &JSONRPCRequest[T]{
+		Request: &ListPromptsRequest[T]{
 			Request: Request[T]{
-				Method: ListResourceTemplRequestMethod,
+				Method: ListResourceTemplatesRequestMethod,
 			},
 			Params: params,
 		},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(listReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -241,18 +207,16 @@ func (c *Client[T, RQ, NF, RS]) ListResourceTemplatesRequest(ctx context.Context
 }
 
 // ReadResource reads the content of a specific resource.
-func (c *Client[T, RQ, NF, RS]) ReadResource(ctx context.Context, params ReadResourceRequestParams) (ReadResourceResult, error) {
+func (c *Client[T]) ReadResource(ctx context.Context, params ReadResourceRequestParams) (ReadResourceResult, error) {
 	// c.assertCapability("resources", ReadResourceRequestMethod)
 
-	readReq := ReadResourceRequest[T]{
-		Request: Request[T]{
-			Method: ReadResourceRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &ReadResourceRequest[T]{
+			Request: Request[T]{
+				Method: ReadResourceRequestMethod,
+			},
+			Params: &params,
 		},
-		Params: &params,
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(readReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -265,18 +229,16 @@ func (c *Client[T, RQ, NF, RS]) ReadResource(ctx context.Context, params ReadRes
 }
 
 // CallTool sends a tool call request.
-func (c *Client[T, RQ, NF, RS]) CallTool(ctx context.Context, params CallToolRequestParams) (CallToolResult, error) {
+func (c *Client[T]) CallTool(ctx context.Context, params CallToolRequestParams) (CallToolResult, error) {
 	// c.assertCapability("tools", CallToolRequestMethod)
 
-	callReq := CallToolRequest[T]{
-		Request: Request[T]{
-			Method: CallToolRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &CallToolRequest[T]{
+			Request: Request[T]{
+				Method: CallToolRequestMethod,
+			},
+			Params: params,
 		},
-		Params: params,
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(callReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -289,20 +251,16 @@ func (c *Client[T, RQ, NF, RS]) CallTool(ctx context.Context, params CallToolReq
 }
 
 // ListTools retrieves a list of available tools.
-func (c *Client[T, RQ, NF, RS]) ListTools(ctx context.Context, params *PaginatedRequestParams) (ListToolsResult, error) {
+func (c *Client[T]) ListTools(ctx context.Context, params *PaginatedRequestParams) (ListToolsResult, error) {
 	// c.assertCapability("tools", ListToolsRequestMethod)
 
-	listReq := ListPromptsRequest[T]{
-		PaginatedRequest: PaginatedRequest[T]{
+	req := &JSONRPCRequest[T]{
+		Request: &ListPromptsRequest[T]{
 			Request: Request[T]{
 				Method: ListToolsRequestMethod,
 			},
 			Params: params,
 		},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(listReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -315,18 +273,16 @@ func (c *Client[T, RQ, NF, RS]) ListTools(ctx context.Context, params *Paginated
 }
 
 // SubscribeResource subscribes to updates for a specific resource.
-func (c *Client[T, RQ, NF, RS]) SubscribeResource(ctx context.Context, params SubscribeRequestParams) error {
+func (c *Client[T]) SubscribeResource(ctx context.Context, params SubscribeRequestParams) error {
 	// c.assertCapability("resources", SubscribeRequestMethod)
 
-	subReq := SubscribeRequest[T]{
-		Request: Request[T]{
-			Method: SubscribeRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &SubscribeRequest[T]{
+			Request: Request[T]{
+				Method: SubscribeRequestMethod,
+			},
+			Params: params,
 		},
-		Params: params,
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(subReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 	_, err := c.protocol.SendRequest(ctx, req)
@@ -334,18 +290,16 @@ func (c *Client[T, RQ, NF, RS]) SubscribeResource(ctx context.Context, params Su
 }
 
 // UnsubscribeResource unsubscribes from updates for a specific resource.
-func (c *Client[T, RQ, NF, RS]) UnsubscribeResource(ctx context.Context, params UnsubscribeRequestParams) error {
+func (c *Client[T]) UnsubscribeResource(ctx context.Context, params UnsubscribeRequestParams) error {
 	// c.assertCapability("resources", UnsubscribeRequestMethod)
 
-	unsubReq := UnsubscribeRequest[T]{
-		Request: Request[T]{
-			Method: UnsubscribeRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &UnsubscribeRequest[T]{
+			Request: Request[T]{
+				Method: UnsubscribeRequestMethod,
+			},
+			Params: params,
 		},
-		Params: params,
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(unsubReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
@@ -354,18 +308,16 @@ func (c *Client[T, RQ, NF, RS]) UnsubscribeResource(ctx context.Context, params 
 }
 
 // SetLoggingLevel adjusts the logging level on the server.
-func (c *Client[T, RQ, NF, RS]) SetLoggingLevel(ctx context.Context, level LoggingLevel) error {
+func (c *Client[T]) SetLoggingLevel(ctx context.Context, level LoggingLevel) error {
 	// c.assertCapability("logging", SetLoggingLevelRequestMethod)
 
-	unsubReq := SetLevelRequest[T]{
-		Request: Request[T]{
-			Method: SetLevelRequestMethod,
+	req := &JSONRPCRequest[T]{
+		Request: &SetLevelRequest[T]{
+			Request: Request[T]{
+				Method: SetLevelRequestMethod,
+			},
+			Params: SetLevelRequestParams{Level: level},
 		},
-		Params: SetLevelRequestParams{Level: level},
-	}
-
-	req := &JSONRPCRequest[T, RQ]{
-		Request: any(unsubReq).(RQ),
 		Version: JSONRPCVersion,
 	}
 
