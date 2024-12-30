@@ -2,9 +2,7 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -12,19 +10,15 @@ import (
 )
 
 const (
-	// DefaultReqTimeout sets max timeout for sending a JSON RPC request.
+	// DefaultReqTimeout sets max timeout for receiving a JSON RPC response.
 	DefaultReqTimeout = 60 * time.Second
-	// DefaultRespTimeout sets max timeout for receiving a JSON RPC response.
-	DefaultRespTimeout = 60 * time.Second
-	// HandleTimeout sets max timeout for handling a JSON RPC message.
-	HandleTimeout = 60 * time.Second
-	// WaitTimeout sets max wait timeout for a JSON RPC message to be consumed.
-	WaitTimeout = 300 * time.Millisecond
+	// DefaultHandleTimeout sets max timeout for handling a JSON RPC message.
+	DefaultHandleTimeout = 60 * time.Second
+	// DefaultWaitTimeout sets max wait timeout for a JSON RPC message to be consumed.
+	DefaultWaitTimeout = 300 * time.Millisecond
 )
 
 var (
-	// ErrTransportClosed is returned when the transport has been closed.
-	ErrTransportClosed = errors.New("transport closed")
 	// ErrInvalidTransport is returned when attempting to connect using invalid transport.
 	ErrInvalidTransport = errors.New("invalid transport")
 	// ErrPendingRequests is returned when attempting to connect while there are unhandled requests.
@@ -39,8 +33,10 @@ var (
 
 // Options are client options
 type Options struct {
-	ReqTimeout  time.Duration
-	RespTimeout time.Duration
+	ReqTimeout    time.Duration
+	HandleTimeout time.Duration
+	WaitTimeout   time.Duration
+	Transport     Transport
 }
 
 // Option is functional graph option.
@@ -48,8 +44,10 @@ type Option func(*Options)
 
 func DefaultOptions() Options {
 	return Options{
-		ReqTimeout:  DefaultReqTimeout,
-		RespTimeout: DefaultRespTimeout,
+		ReqTimeout:    DefaultReqTimeout,
+		HandleTimeout: DefaultHandleTimeout,
+		WaitTimeout:   DefaultWaitTimeout,
+		Transport:     NewInMemTransport(),
 	}
 }
 
@@ -60,10 +58,24 @@ func WithReqTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithRespTimeout sets request timeout option.
-func WithRespTimeout(timeout time.Duration) Option {
+// WithHandleTimeout sets message handling timeout option.
+func WithHandleTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		o.RespTimeout = timeout
+		o.HandleTimeout = timeout
+	}
+}
+
+// WithWaitTimeout sets response stream timeout option.
+func WithWaitTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
+		o.WaitTimeout = timeout
+	}
+}
+
+// WithTransport sets protocol transport.
+func WithTransport(tr Transport) Option {
+	return func(o *Options) {
+		o.Transport = tr
 	}
 }
 
@@ -83,6 +95,9 @@ type RespOrError[T ID] struct {
 // Protocol is a Transport agnostic implementation of MCP communication protocol.
 type Protocol[T ID] struct {
 	transport Transport
+
+	// protocol options
+	options Options
 
 	// For tracking pending requests
 	pendingMu sync.RWMutex
@@ -106,11 +121,16 @@ type Protocol[T ID] struct {
 }
 
 // NewProtocol creates a new instances of Protocol and returns it.
-// TODO: make Transport an optional parameter and use stdio as the default transport.
-func NewProtocol[T ID](transport Transport) *Protocol[T] {
+func NewProtocol[T ID](opts ...Option) *Protocol[T] {
+	options := DefaultOptions()
+	for _, apply := range opts {
+		apply(&options)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Protocol[T]{
-		transport: transport,
+		transport: options.Transport,
+		options:   options,
 		pending:   make(map[RequestID[T]]chan RespOrError[T]),
 		handlers:  make(map[RequestMethod]RequestHandler[T]),
 		notify:    make(map[RequestMethod]NotificationHandler[T]),
@@ -119,20 +139,51 @@ func NewProtocol[T ID](transport Transport) *Protocol[T] {
 	}
 
 	//Register default ping handler
-	p.RegisterRequestHandler(PingRequestMethod, func(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
-		// TODO: consider adding Pong Result
-		return &JSONRPCResponse[T]{
-			ID:      req.ID,
-			Version: req.Version,
-		}, nil
-	})
+	p.RegisterRequestHandler(PingRequestMethod,
+		func(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
+			return &JSONRPCResponse[T]{
+				ID:      req.ID,
+				Version: req.Version,
+				Result:  &PingResult{},
+			}, nil
+		})
 
 	return p
 }
 
-// Connect establishes the protocol on top of the given transport.
-// If protocol transport is not initialized it returns error.
-// If there are pending requests it returns error.
+// RegisterRequestHandler registers a handler for the given request method.
+// If there is an existing handler registered, this method overrides it.
+func (p *Protocol[T]) RegisterRequestHandler(method RequestMethod, handler RequestHandler[T]) {
+	p.handlersMu.Lock()
+	defer p.handlersMu.Unlock()
+	p.handlers[method] = handler
+}
+
+// DeregisterRequestHandler deregisters a handler for the given request method.
+func (p *Protocol[T]) DeregisterRequestHandler(method RequestMethod) {
+	p.handlersMu.Lock()
+	defer p.handlersMu.Unlock()
+	delete(p.handlers, method)
+}
+
+// RegisterNotificationHandler registers a handler for the given notification request method.
+// If there is an existing handler registered, this method overrides it.
+func (p *Protocol[T]) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler[T]) {
+	p.notifyMu.Lock()
+	defer p.notifyMu.Unlock()
+	p.notify[method] = handler
+}
+
+// DeregisterNotificationHandler deregisters a handler for the given request method.
+func (p *Protocol[T]) DeregisterNotificationHandler(method RequestMethod) {
+	p.notifyMu.Lock()
+	defer p.notifyMu.Unlock()
+	delete(p.notify, method)
+}
+
+// Connect establishes the protocol on top of the given transport
+// and starts receiving messages sent to it.
+// TODO: consider overriding Transport on connect.
 func (p *Protocol[T]) Connect() error {
 	if !p.running.CompareAndSwap(false, true) {
 		return ErrAlreadyConnected
@@ -178,23 +229,21 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 	}
 
 	// notify all pending requests
-	// NOTE: if we got here, the transport has been closed
-	// so sending anything down its pipes will fail.
 	for reqID, ch := range p.pending {
 		errResp := &JSONRPCError[T]{
 			ID:      reqID,
 			Version: JSONRPCVersion,
 			Err: Error{
 				Code:    JSONRPCConnectionClosed,
-				Message: ErrTransportClosed.Error(),
+				Message: "Connection closed",
 			},
 		}
 		select {
 		case ch <- RespOrError[T]{Err: errResp}:
+		case <-time.After(p.options.WaitTimeout):
+			log.Printf("response send to %v request timed out", reqID)
 		case <-p.ctx.Done():
 		case <-ctx.Done():
-		case <-time.After(WaitTimeout):
-			log.Printf("response send to %v request timed out", reqID)
 		}
 		delete(p.pending, reqID)
 	}
@@ -202,15 +251,11 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 	return nil
 }
 
-func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], opts ...Option) (*JSONRPCResponse[T], error) {
-	options := DefaultOptions()
-	for _, apply := range opts {
-		apply(&options)
-	}
-
+// SendRequest sends a request and waits for response
+// TODO: consider overriding protocol timeouts.
+func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
 	// Returns the old value and increments
 	id := p.nextID.Add(1)
-
 	req.ID = RequestID[T]{Value: T(id)}
 	req.Version = JSONRPCVersion
 
@@ -228,82 +273,35 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 		p.pendingMu.Unlock()
 	}()
 
-	// Send the request using the original context
-	data, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %v", err)
-	}
-
-	// Create request timeout context
-	reqCtx, cancel := context.WithTimeout(ctx, options.ReqTimeout)
-	defer cancel()
-
-	if err := p.transport.Send(reqCtx, data); err != nil {
+	if err := p.transport.Send(ctx, req); err != nil {
 		return nil, err
 	}
 
-	// Create request timeout context
-	respCtx, cancel := context.WithTimeout(ctx, options.RespTimeout)
-	defer cancel()
-
-	// send succeeded, let's wait for the response
 	select {
 	case result := <-respChan:
 		if result.Err != nil {
 			return nil, result.Err
 		}
 		return result.Resp, nil
-	case <-respCtx.Done():
-		if respCtx.Err() == context.DeadlineExceeded {
-			return nil, Error{
+	case <-time.After(p.options.ReqTimeout):
+		return nil, &JSONRPCError[T]{
+			ID: req.ID,
+			Err: Error{
 				Code:    JSONRPCRequestTimeout,
 				Message: ErrResponseTimeout.Error(),
-			}
+			},
 		}
-		return nil, respCtx.Err()
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-p.ctx.Done():
+		return nil, p.ctx.Err()
 	}
 }
 
 // SendNotification sends a notification (fire and forget)
 func (p *Protocol[T]) SendNotification(ctx context.Context, notif *JSONRPCNotification[T]) error {
-	notif.Version = JSONRPCVersion // making sure we have the right version
-	data, err := json.Marshal(notif)
-	if err != nil {
-		return err
-	}
-	return p.transport.Send(ctx, data)
-}
-
-// RegisterRequestHandler registers a handler for the given request method.
-// If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T]) RegisterRequestHandler(method RequestMethod, handler RequestHandler[T]) {
-	p.handlersMu.Lock()
-	defer p.handlersMu.Unlock()
-	p.handlers[method] = handler
-}
-
-// DeregisterRequestHandler deregisters a handler for the given request method.
-func (p *Protocol[T]) DeregisterRequestHandler(method RequestMethod) {
-	p.handlersMu.Lock()
-	defer p.handlersMu.Unlock()
-	delete(p.handlers, method)
-}
-
-// RegisterNotificationHandler registers a handler for the given notification request method.
-// If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T]) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler[T]) {
-	p.notifyMu.Lock()
-	defer p.notifyMu.Unlock()
-	p.notify[method] = handler
-}
-
-// DeregisterNotificationHandler deregisters a handler for the given request method.
-func (p *Protocol[T]) DeregisterNotificationHandler(method RequestMethod) {
-	p.notifyMu.Lock()
-	defer p.notifyMu.Unlock()
-	delete(p.notify, method)
+	notif.Version = JSONRPCVersion
+	return p.transport.Send(ctx, notif)
 }
 
 // recvMsg handles incoming messages from the transport
@@ -315,119 +313,115 @@ func (p *Protocol[T]) recvMsg() {
 		case <-p.ctx.Done():
 			return
 		default:
-			// TODO: consider transport recovery
-			// I/O errors may be transient so we
-			// should do some best effort retry.
+			// TODO: consider recovering from possible
+			// intermittent Transport errors
 			msg, err := p.transport.Receive(p.ctx)
 			if err != nil {
-				log.Printf("receive message: %v", err)
 				if closeErr := p.Close(context.Background()); closeErr != nil {
 					log.Printf("shutting down: %v", err)
 				}
 				return
 			}
-			// TODO: we need to consider some bounded concurrency here
-			// so that under high load we limit the number of goroutines.
 			go p.handleMessage(msg)
 		}
 	}
 }
 
-// Factoring out response sending to handle errors properly
-// TODO: get rid of the opaque any type
-func (p *Protocol[T]) sendResponse(ctx context.Context, resp any) error {
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return err
+func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
+	// NOTE: this should never happen if underlying Transport
+	// is properly implemented, but let's not take that risk!
+	if msg == nil {
+		return
 	}
 
-	if err := p.transport.Send(ctx, data); err != nil {
-		return fmt.Errorf("send response: %v", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), p.options.HandleTimeout)
+	defer cancel()
 
-	return nil
+	switch msg.JSONRPCMessageType() {
+	case JSONRPCRequestMsgType:
+		req, ok := msg.(*JSONRPCRequest[T])
+		if !ok {
+			log.Printf("invalid request message type: %T", msg)
+			return
+		}
+		p.handleRequest(ctx, req)
+
+	case JSONRPCNotificationMsgType:
+		notif, ok := msg.(*JSONRPCNotification[T])
+		if !ok {
+			log.Printf("invalid notification message type: %T", msg)
+			return
+		}
+		p.handleNotification(ctx, notif)
+
+	case JSONRPCResponseMsgType:
+		resp, ok := msg.(*JSONRPCResponse[T])
+		if !ok {
+			log.Printf("invalid response message type: %T", msg)
+			return
+		}
+		p.handleResponse(ctx, resp)
+
+	case JSONRPCErrorMsgType:
+		errMsg, ok := msg.(*JSONRPCError[T])
+		if !ok {
+			log.Printf("invalid error message type: %T", msg)
+			return
+		}
+		p.handleError(ctx, errMsg)
+	}
 }
 
-func (p *Protocol[T]) handleError(ctx context.Context, id RequestID[T], msg []byte) error {
+func (p *Protocol[T]) handleError(ctx context.Context, errMsg *JSONRPCError[T]) {
 	p.pendingMu.RLock()
-	ch, ok := p.pending[id]
+	ch, ok := p.pending[errMsg.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
-		var errResp JSONRPCError[T]
-		if err := json.Unmarshal(msg, &errResp); err != nil {
-			errResp.ID = id
-			errResp.Version = JSONRPCVersion
-			errResp.Err.Code = JSONRPCParseError
-			errResp.Err.Message = fmt.Sprintf("invalid RPC error message: %v", err)
-		}
-
 		select {
-		case ch <- RespOrError[T]{Err: &errResp}:
-			return nil
-		case <-time.After(WaitTimeout):
-			return fmt.Errorf("handle RPC error timeout")
+		case ch <- RespOrError[T]{Err: errMsg}:
+		case <-time.After(p.options.WaitTimeout):
+			log.Printf("handle RPC handle error client wait timeout")
 		case <-p.ctx.Done():
-			return p.ctx.Err()
 		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
-	return nil
 }
 
-func (p *Protocol[T]) handleResponse(ctx context.Context, id RequestID[T], msg []byte) error {
+func (p *Protocol[T]) handleResponse(ctx context.Context, resp *JSONRPCResponse[T]) {
 	p.pendingMu.RLock()
-	ch, ok := p.pending[id]
+	ch, ok := p.pending[resp.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
-		var respOrErr RespOrError[T]
-
-		var resp JSONRPCResponse[T]
-		if err := json.Unmarshal(msg, &resp); err != nil {
-			respOrErr.Err = &JSONRPCError[T]{
-				ID:      id,
-				Version: JSONRPCVersion,
-				Err: Error{
-					Code:    JSONRPCParseError,
-					Message: fmt.Sprintf("invalid RPC response message: %v", err),
-				},
-			}
-		}
-		if respOrErr.Err == nil {
-			respOrErr.Resp = &resp
-		}
-
 		select {
-		case ch <- respOrErr:
-			return nil
-		case <-time.After(WaitTimeout):
-			return fmt.Errorf("handle RPC response timeout")
+		case ch <- RespOrError[T]{Resp: resp}:
+		case <-time.After(p.options.WaitTimeout):
+			log.Printf("handle RPC handle response client wait timeout")
 		case <-p.ctx.Done():
-			return p.ctx.Err()
 		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
-	return nil
 }
 
-func (p *Protocol[T]) handleRequest(ctx context.Context, id RequestID[T], msg []byte) error {
-	var req JSONRPCRequest[T]
-	if err := json.Unmarshal(msg, &req); err != nil {
-		errResp := &JSONRPCError[T]{
-			ID:      id,
-			Version: JSONRPCVersion,
-			Err: Error{
-				Code:    JSONRPCParseError,
-				Message: fmt.Sprintf("invalid RPC request message: %v", err),
-			},
+func (p *Protocol[T]) handleNotification(ctx context.Context, n *JSONRPCNotification[T]) {
+	p.notifyMu.RLock()
+	handler, ok := p.notify[n.Notification.GetMethod()]
+	p.notifyMu.RUnlock()
+
+	if ok {
+		if err := handler(ctx, n); err != nil {
+			log.Printf("notification handler error: %v", err)
 		}
-		if err := p.sendResponse(ctx, errResp); err != nil {
-			return fmt.Errorf("send response: %v", errResp)
-		}
-		return fmt.Errorf("invalid RPC request: %v", err)
+	}
+}
+
+func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T]) {
+	// NOTE: this should never happen if underlying Transport
+	// is properly implemented, but let's not take that risk!
+	if req.Request == nil {
+		log.Printf("Received empty JSON-RPC request with: %#v", req)
+		return
 	}
 
 	p.handlersMu.RLock()
@@ -443,13 +437,13 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, id RequestID[T], msg []
 				Message: "Method not found",
 			},
 		}
-		if err := p.sendResponse(ctx, errResp); err != nil {
-			return fmt.Errorf("send response: %v", err)
+		if err := p.transport.Send(ctx, errResp); err != nil {
+			log.Printf("send request error response: %v", err)
 		}
-		return nil
+		return
 	}
 
-	resp, err := handler(ctx, &req)
+	resp, err := handler(ctx, req)
 	if err != nil {
 		errResp := &JSONRPCError[T]{
 			ID:      req.ID,
@@ -463,90 +457,18 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, id RequestID[T], msg []
 		if ctx.Err() != nil {
 			ctx = context.Background()
 		}
-		if err := p.sendResponse(ctx, errResp); err != nil {
-			return fmt.Errorf("send response: %v", err)
+		if err := p.transport.Send(ctx, errResp); err != nil {
+			log.Printf("send handler error response: %v", err)
 		}
-		return nil
+		return
 	}
 
-	// Send success response
 	out := &JSONRPCResponse[T]{
 		ID:      req.ID,
 		Version: JSONRPCVersion,
 		Result:  resp.Result,
 	}
-	if err := p.sendResponse(ctx, out); err != nil {
-		return fmt.Errorf("send response: %v", err)
-	}
-	return nil
-}
-
-func (p *Protocol[T]) handleNotification(ctx context.Context, msg []byte) error {
-	var n JSONRPCNotification[T]
-	if err := json.Unmarshal(msg, &n); err != nil {
-		return fmt.Errorf("invalid RPC notification: %v", err)
-	}
-
-	p.notifyMu.RLock()
-	handler, ok := p.notify[n.Notification.GetMethod()]
-	p.notifyMu.RUnlock()
-
-	if ok {
-		// We can ignore errors from notification handlers
-		// since notifications don't expect responses
-		// We could log the error here or something
-		_ = handler(ctx, &n)
-	}
-	return nil
-}
-
-// handleMessage processes a received JSON RPC message.
-func (p *Protocol[T]) handleMessage(msg []byte) {
-	ctx, cancel := context.WithTimeout(context.Background(), HandleTimeout)
-	defer cancel()
-
-	type Base struct {
-		Version string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  json.RawMessage `json:"method"`
-		Error   json.RawMessage `json:"error"`
-	}
-
-	var rpcMsg Base
-	if err := json.Unmarshal(msg, &rpcMsg); err != nil {
-		log.Printf("invalid RPC message: %v", err)
-		return
-	}
-
-	if len(rpcMsg.ID) > 0 {
-		var msgID RequestID[T]
-		if err := json.Unmarshal(rpcMsg.ID, &msgID); err != nil {
-			log.Printf("failed to unmarshal message 'id': %v", err)
-			return
-		}
-
-		if len(rpcMsg.Error) > 0 {
-			if err := p.handleError(ctx, msgID, msg); err != nil {
-				log.Printf("handle RPC error: %v", err)
-			}
-			return
-		}
-
-		if len(rpcMsg.Method) == 0 {
-			if err := p.handleResponse(ctx, msgID, msg); err != nil {
-				log.Printf("handle RPC response: %v", err)
-			}
-			return
-		}
-
-		if err := p.handleRequest(ctx, msgID, msg); err != nil {
-			log.Printf("handle RPC request: %v", err)
-		}
-		return
-	}
-
-	if err := p.handleNotification(ctx, msg); err != nil {
-		log.Printf("handle RPC notification: %v", err)
-		return
+	if err := p.transport.Send(ctx, out); err != nil {
+		log.Printf("send handler request response: %v", err)
 	}
 }

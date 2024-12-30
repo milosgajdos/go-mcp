@@ -8,6 +8,7 @@ import (
 
 type ClientOptions struct {
 	EnforceCaps bool
+	Transport   Transport
 }
 
 type ClientOption func(*ClientOptions)
@@ -15,6 +16,13 @@ type ClientOption func(*ClientOptions)
 func WithEnforceCaps() ClientOption {
 	return func(o *ClientOptions) {
 		o.EnforceCaps = true
+	}
+}
+
+// WithTransport sets protocol transport.
+func WithClientTransport(tr Transport) ClientOption {
+	return func(o *ClientOptions) {
+		o.Transport = tr
 	}
 }
 
@@ -27,16 +35,19 @@ type Client[T ID] struct {
 }
 
 // NewClient initializes a new MCP client.
-func NewClient[T ID](transport Transport, opts ...ClientOption) (*Client[T], error) {
-	if transport == nil {
-		return nil, ErrInvalidTransport
-	}
+func NewClient[T ID](opts ...ClientOption) (*Client[T], error) {
 	options := ClientOptions{}
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	protocol := NewProtocol[T](transport)
+	// TODO: check if options.Transport is set
+	// if it isn't we should use STDIO as the default transport
+	// if options.Transport == nil {
+	// 	return nil, ErrInvalidTransport
+	// }
+
+	protocol := NewProtocol[T](WithTransport(options.Transport))
 	return &Client[T]{
 		protocol: protocol,
 		options:  options,

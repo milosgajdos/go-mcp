@@ -29,7 +29,13 @@ type ResultT interface {
 	isResult()
 }
 
-// JSONRPCMessageType is used to identify JSONRPCM message type.
+// JSONRPCMessage sent over transport
+// JSONRPCRequest | JSONRPCResponse | JSONRPCNotification | JSONRPCError
+type JSONRPCMessage interface {
+	JSONRPCMessageType() JSONRPCMessageType
+}
+
+// JSONRPCMessageType identifies JSONRPC message.
 type JSONRPCMessageType string
 
 const (
@@ -86,7 +92,7 @@ func (j *JSONRPCRequest[T]) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("field 'id' in JSONRPCRequest: required")
 	}
 	if req.Version != JSONRPCVersion {
-		return fmt.Errorf("invalid 'jsonrpc' in JSONRPCRequest: %v", req.Version)
+		return fmt.Errorf("invalid 'jsonrpc' in JSONRPCRequest: %q", req.Version)
 	}
 	if _, ok := enumRequestMethod[req.Method]; !ok {
 		return fmt.Errorf("invalid request method in JSONRPCRequest: %q", req.Method)
@@ -236,7 +242,7 @@ func (j *JSONRPCNotification[T]) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	if n.Version != JSONRPCVersion {
-		return fmt.Errorf("invalid 'jsonrpc' in JSONRPCNotification: %v", n.Version)
+		return fmt.Errorf("invalid 'jsonrpc' in JSONRPCNotification: %q", n.Version)
 	}
 	if _, ok := enumRequestMethod[n.Method]; !ok {
 		return fmt.Errorf("invalid method in JSONRPCNotification: %q", n.Method)
@@ -2326,6 +2332,13 @@ type PaginatedResult struct {
 	// last returned result. If present, there may be more results available.
 	NextCursor *Cursor `json:"nextCursor,omitempty"`
 }
+
+// The server's response to a ping request.
+type PingResult struct {
+	Result
+}
+
+func (p *PingResult) isResult() {}
 
 type ContentType string
 
