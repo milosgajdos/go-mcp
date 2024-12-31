@@ -72,20 +72,160 @@ func (j JSONRPCRequest[T]) JSONRPCMessageType() JSONRPCMessageType {
 }
 
 // MarshalJSON implements json.Marshaler.
-// TODO: make this simpler and avoid multiple marshal/unmarshal roundtrips
 func (j JSONRPCRequest[T]) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(j.Request)
-	if err != nil {
-		return nil, err
+	switch r := j.Request.(type) {
+	case *PingRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*PingRequest[T]
+		}{
+			ID:          j.ID.Value,
+			Version:     j.Version,
+			PingRequest: r,
+		})
+	case *InitializeRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*InitializeRequest[T]
+		}{
+			ID:                j.ID.Value,
+			Version:           j.Version,
+			InitializeRequest: r,
+		})
+	case *CompleteRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*CompleteRequest[T]
+		}{
+			ID:              j.ID.Value,
+			Version:         j.Version,
+			CompleteRequest: r,
+		})
+	case *SetLevelRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*SetLevelRequest[T]
+		}{
+			ID:              j.ID.Value,
+			Version:         j.Version,
+			SetLevelRequest: r,
+		})
+	case *GetPromptRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*GetPromptRequest[T]
+		}{
+			ID:               j.ID.Value,
+			Version:          j.Version,
+			GetPromptRequest: r,
+		})
+	case *ListPromptsRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ListPromptsRequest[T]
+		}{
+			ID:                 j.ID.Value,
+			Version:            j.Version,
+			ListPromptsRequest: r,
+		})
+	case *ListResourcesRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ListResourcesRequest[T]
+		}{
+			ID:                   j.ID.Value,
+			Version:              j.Version,
+			ListResourcesRequest: r,
+		})
+	case *ListResourceTemplatesRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ListResourceTemplatesRequest[T]
+		}{
+			ID:                           j.ID.Value,
+			Version:                      j.Version,
+			ListResourceTemplatesRequest: r,
+		})
+	case *ListToolsRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ListToolsRequest[T]
+		}{
+			ID:               j.ID.Value,
+			Version:          j.Version,
+			ListToolsRequest: r,
+		})
+	case *ReadResourceRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ReadResourceRequest[T]
+		}{
+			ID:                  j.ID.Value,
+			Version:             j.Version,
+			ReadResourceRequest: r,
+		})
+	case *SubscribeRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*SubscribeRequest[T]
+		}{
+			ID:               j.ID.Value,
+			Version:          j.Version,
+			SubscribeRequest: r,
+		})
+	case *UnsubscribeRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*UnsubscribeRequest[T]
+		}{
+			ID:                 j.ID.Value,
+			Version:            j.Version,
+			UnsubscribeRequest: r,
+		})
+	case *CallToolRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*CallToolRequest[T]
+		}{
+			ID:              j.ID.Value,
+			Version:         j.Version,
+			CallToolRequest: r,
+		})
+	case *CreateMessageRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*CreateMessageRequest[T]
+		}{
+			ID:                   j.ID.Value,
+			Version:              j.Version,
+			CreateMessageRequest: r,
+		})
+	case *ListRootsRequest[T]:
+		return json.Marshal(struct {
+			ID      T      `json:"id"`
+			Version string `json:"jsonrpc"`
+			*ListRootsRequest[T]
+		}{
+			ID:               j.ID.Value,
+			Version:          j.Version,
+			ListRootsRequest: r,
+		})
 	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	m["id"] = j.ID.Value
-	m["jsonrpc"] = j.Version
-
-	return json.Marshal(m)
+	return nil, fmt.Errorf("unknown request type: %T", j.Request)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -227,19 +367,82 @@ func (j JSONRPCNotification[T]) JSONRPCMessageType() JSONRPCMessageType {
 }
 
 // MarshalJSON implements json.Marshaler.
-// TODO: make this simpler and avoid multiple marshal/unmarshal roundtrips
 func (j JSONRPCNotification[T]) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(j.Notification)
-	if err != nil {
-		return nil, err
+	switch n := j.Notification.(type) {
+	case *ProgressNotification[T]:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*ProgressNotification[T]
+		}{
+			Version:              j.Version,
+			ProgressNotification: n,
+		})
+	case *InitializedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*InitializedNotification
+		}{
+			Version:                 j.Version,
+			InitializedNotification: n,
+		})
+	case *RootsListChangedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*RootsListChangedNotification
+		}{
+			Version:                      j.Version,
+			RootsListChangedNotification: n,
+		})
+	case *LoggingMessageNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*LoggingMessageNotification
+		}{
+			Version:                    j.Version,
+			LoggingMessageNotification: n,
+		})
+	case *ResourceUpdatedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*ResourceUpdatedNotification
+		}{
+			Version:                     j.Version,
+			ResourceUpdatedNotification: n,
+		})
+	case *ResourceListChangedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*ResourceListChangedNotification
+		}{
+			Version:                         j.Version,
+			ResourceListChangedNotification: n,
+		})
+	case *ToolListChangedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*ToolListChangedNotification
+		}{
+			Version:                     j.Version,
+			ToolListChangedNotification: n,
+		})
+	case *PromptListChangedNotification:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*PromptListChangedNotification
+		}{
+			Version:                       j.Version,
+			PromptListChangedNotification: n,
+		})
+	case *CancelledNotification[T]:
+		return json.Marshal(struct {
+			Version string `json:"jsonrpc"`
+			*CancelledNotification[T]
+		}{
+			Version:               j.Version,
+			CancelledNotification: n,
+		})
 	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	m["jsonrpc"] = j.Version
-
-	return json.Marshal(m)
+	return nil, fmt.Errorf("unknown notification type: %T", j.Notification)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -337,6 +540,9 @@ func (j JSONRPCResponse[T]) JSONRPCMessageType() JSONRPCMessageType {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
+// NOTE: Results do not have any differentiating field
+// which makes unmarshaling in Go comically painful.
+// We might want to switch to `any` and lose type safety.
 func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	var resp struct {
 		Result  json.RawMessage `json:"result"`
