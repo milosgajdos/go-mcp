@@ -143,7 +143,7 @@ func NewProtocol[T ID](opts ...Option) *Protocol[T] {
 		func(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
 			return &JSONRPCResponse[T]{
 				ID:      req.ID,
-				Version: req.Version,
+				Version: JSONRPCVersion,
 				Result:  &PingResult{},
 			}, nil
 		})

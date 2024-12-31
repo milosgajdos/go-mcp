@@ -10,6 +10,16 @@ const (
 	LatestVersion  = "2024-11-05"
 )
 
+var supportedVersions = map[string]struct{}{
+	LatestVersion: {},
+	"2024-10-07":  {},
+}
+
+func IsSupportedVersion(version string) bool {
+	_, ok := supportedVersions[version]
+	return ok
+}
+
 // RequestT must be implemented by all Requests.
 type RequestT[T ID] interface {
 	json.Unmarshaler

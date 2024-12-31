@@ -6,14 +6,21 @@ import (
 	"sync/atomic"
 )
 
+const (
+	clientName    = "githuh.com/milosgajdos/go-mcp"
+	clientVersion = "v1.alpha"
+)
+
 type ClientOptions struct {
-	EnforceCaps bool
-	Transport   Transport
+	EnforceCaps  bool
+	Transport    Transport
+	Info         Implementation
+	Capabilities ClientCapabilities
 }
 
 type ClientOption func(*ClientOptions)
 
-func WithEnforceCaps() ClientOption {
+func WithClientEnforceCaps() ClientOption {
 	return func(o *ClientOptions) {
 		o.EnforceCaps = true
 	}
@@ -26,9 +33,33 @@ func WithClientTransport(tr Transport) ClientOption {
 	}
 }
 
+// WithInfo sets client implementation info.
+func WithClientInfo(info Implementation) ClientOption {
+	return func(o *ClientOptions) {
+		o.Info = info
+	}
+}
+
+// WithClientCapabilities sets client capabilities.
+func WithClientCapabilities(caps ClientCapabilities) ClientOption {
+	return func(o *ClientOptions) {
+		o.Capabilities = caps
+	}
+}
+
+func DefaultClientOptions() ClientOptions {
+	return ClientOptions{
+		Info: Implementation{
+			Name:    clientName,
+			Version: clientVersion,
+		},
+	}
+}
+
 type Client[T ID] struct {
 	options    ClientOptions
 	protocol   *Protocol[T]
+	caps       ClientCapabilities
 	serverInfo Implementation
 	serverCaps ServerCapabilities
 	connected  atomic.Bool
@@ -36,22 +67,32 @@ type Client[T ID] struct {
 
 // NewClient initializes a new MCP client.
 func NewClient[T ID](opts ...ClientOption) (*Client[T], error) {
-	options := ClientOptions{}
+	options := DefaultClientOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	// TODO: check if options.Transport is set
-	// if it isn't we should use STDIO as the default transport
-	// if options.Transport == nil {
-	// 	return nil, ErrInvalidTransport
-	// }
+	// NOTE: consider using In-memory transport as default
+	if options.Transport == nil {
+		return nil, ErrInvalidTransport
+	}
 
 	protocol := NewProtocol[T](WithTransport(options.Transport))
 	return &Client[T]{
 		protocol: protocol,
 		options:  options,
+		caps:     options.Capabilities,
 	}, nil
+}
+
+// GetServerCapabilities returns server capabilities.
+func (c *Client[T]) GetServerCapabilities() ServerCapabilities {
+	return c.serverCaps
+}
+
+// GetServerInfo returns server info.
+func (c *Client[T]) GetServerInfo() Implementation {
+	return c.serverInfo
 }
 
 // Ping sends a ping request.
@@ -70,7 +111,7 @@ func (c *Client[T]) Ping(ctx context.Context) error {
 }
 
 // Connect establishes a connection and initializes the client.
-func (c *Client[T]) Connect(ctx context.Context, clientInfo Implementation) error {
+func (c *Client[T]) Connect(ctx context.Context) error {
 	if !c.connected.CompareAndSwap(false, true) {
 		return ErrAlreadyConnected
 	}
@@ -86,7 +127,8 @@ func (c *Client[T]) Connect(ctx context.Context, clientInfo Implementation) erro
 			},
 			Params: InitializeRequestParams{
 				ProtocolVersion: LatestVersion,
-				ClientInfo:      clientInfo,
+				ClientInfo:      c.options.Info,
+				Capabilities:    c.options.Capabilities,
 			},
 		},
 		Version: JSONRPCVersion,
@@ -374,7 +416,6 @@ func (c *Client[T]) assertCaps(method RequestMethod) error {
 	if !c.options.EnforceCaps {
 		return nil
 	}
-
 	switch method {
 	case SetLevelRequestMethod:
 		if len(c.serverCaps.Logging) == 0 {
@@ -416,7 +457,7 @@ func (c *Client[T]) assertCaps(method RequestMethod) error {
 		PingRequestMethod:
 		return nil
 	}
-	return fmt.Errorf("no capability defined for %q", method)
+	return nil
 }
 
 func DeepCopyCapabilities(caps ServerCapabilities) ServerCapabilities {
