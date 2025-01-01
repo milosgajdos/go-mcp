@@ -7,6 +7,8 @@ import (
 )
 
 var (
+	// ErrTransportStarted is returned when starting already started transport.
+	ErrTransportStarted = errors.New("transport already started")
 	// ErrTransportClosed is returned when the transport has been closed.
 	ErrTransportClosed = errors.New("transport closed")
 	// ErrSendTimeout is returned when transport send times out
@@ -55,6 +57,8 @@ func WithRecvDelay(delay time.Duration) TransportOption {
 
 // Transport handles sending and receiving JSONRPC messages
 type Transport interface {
+	// Start starts the transport.
+	Start(ctx context.Context) error
 	// Send sends JSONRPCMessage to the remote endpoint.
 	Send(ctx context.Context, msg JSONRPCMessage) error
 	// Receive receives JSONRPCMessage from the remote endpoint.

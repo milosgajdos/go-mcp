@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -209,6 +210,12 @@ func (p *Protocol[T]) Connect() error {
 		}
 	}
 
+	// Start the transport with our protocol context
+	if err := p.transport.Start(p.ctx); err != nil {
+		p.running.Store(false)
+		return fmt.Errorf("failed to start transport: %w", err)
+	}
+
 	go p.recvMsg()
 
 	return nil
@@ -313,14 +320,19 @@ func (p *Protocol[T]) recvMsg() {
 		case <-p.ctx.Done():
 			return
 		default:
-			// TODO: consider recovering from possible
-			// intermittent Transport errors
 			msg, err := p.transport.Receive(p.ctx)
 			if err != nil {
-				if closeErr := p.Close(context.Background()); closeErr != nil {
-					log.Printf("shutting down: %v", err)
+				// Handle specific error cases
+				if errors.Is(err, ErrTransportClosed) || errors.Is(err, context.Canceled) {
+					// Transport closed or context cancelled - clean shutdown
+					if closeErr := p.Close(context.Background()); closeErr != nil {
+						log.Printf("shutting down: %v", closeErr)
+					}
+					return
 				}
-				return
+				// Other errors might be temporary - log and continue
+				log.Printf("receive error: %v", err)
+				continue
 			}
 			go p.handleMessage(msg)
 		}
