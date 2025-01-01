@@ -27,16 +27,14 @@ func TestProtocol_Connect(t *testing.T) {
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
 		}
-		err := p.Connect()
-		if err == nil || err != ErrAlreadyConnected {
+		if err := p.Connect(); err == nil || err != ErrAlreadyConnected {
 			t.Fatalf("Expected already connected error, got: %v", err)
 		}
 	})
 
 	t.Run("Invalid Transport", func(t *testing.T) {
 		invalidProtocol := NewProtocol[uint64](WithTransport(nil)) // nil transport
-		err := invalidProtocol.Connect()
-		if err == nil || err != ErrInvalidTransport {
+		if err := invalidProtocol.Connect(); err == nil || err != ErrInvalidTransport {
 			t.Fatalf("Expected invalid transport error, got: %v", err)
 		}
 	})
@@ -50,8 +48,7 @@ func TestProtocol_Close(t *testing.T) {
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
 		}
-		err := p.Close(context.Background())
-		if err != nil {
+		if err := p.Close(context.Background()); err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
 		if p.running.Load() {
@@ -69,8 +66,7 @@ func TestProtocol_Close(t *testing.T) {
 		if err := p.Close(context.Background()); err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
-		err := p.Close(context.Background())
-		if err != nil {
+		if err := p.Close(context.Background()); err != nil {
 			t.Fatalf("Expected no error on second close, got: %v", err)
 		}
 	})
@@ -86,8 +82,7 @@ func TestProtocol_Close(t *testing.T) {
 		p.pending[RequestID[uint64]{Value: 1}] = make(chan RespOrError[uint64], 1)
 		p.pendingMu.Unlock()
 
-		err := p.Close(context.Background())
-		if err != nil {
+		if err := p.Close(context.Background()); err != nil {
 			t.Fatalf("Expected no error on close, got: %v", err)
 		}
 		if p.running.Load() {
