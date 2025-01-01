@@ -734,3 +734,85 @@ func TestResponseMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestJSONRPCErrorMessages(t *testing.T) {
+	tests := []struct {
+		name  string
+		error JSONRPCError[uint64]
+	}{
+		{
+			name: "MethodNotFoundError",
+			error: JSONRPCError[uint64]{
+				ID:      RequestID[uint64]{Value: 3},
+				Version: JSONRPCVersion,
+				Err: Error{
+					Code:    JSONRPCMethodNotFoundError,
+					Message: "Method not found",
+				},
+			},
+		},
+		{
+			name: "InvalidParamsError",
+			error: JSONRPCError[uint64]{
+				ID:      RequestID[uint64]{Value: 10},
+				Version: JSONRPCVersion,
+				Err: Error{
+					Code:    JSONRPCInvalidParamError,
+					Message: "Invalid parameters",
+				},
+			},
+		},
+		{
+			name: "InternalError",
+			error: JSONRPCError[uint64]{
+				ID:      RequestID[uint64]{Value: 7},
+				Version: JSONRPCVersion,
+				Err: Error{
+					Code:    JSONRPCInternalError,
+					Message: "Internal error occurred",
+				},
+			},
+		},
+		{
+			name: "CustomError",
+			error: JSONRPCError[uint64]{
+				ID:      RequestID[uint64]{Value: 1},
+				Version: JSONRPCVersion,
+				Err: Error{
+					Code:    -32000,
+					Message: "Custom server error",
+					Data: map[string]any{
+						"detail": "Additional error details",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test marshaling
+			data, err := json.Marshal(tt.error)
+			if err != nil {
+				t.Errorf("Marshal %s failed: %v", tt.name, err)
+			}
+
+			// Test unmarshaling
+			var decoded JSONRPCError[uint64]
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Errorf("Unmarshal %s failed: %v", tt.name, err)
+			}
+
+			// Test that the decoded error matches the original
+			reencoded, err := json.Marshal(decoded)
+			if err != nil {
+				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
+			}
+
+			if string(data) != string(reencoded) {
+				t.Errorf("Re-encoded %s doesn't match original.\nOriginal: %s\nRe-encoded: %s",
+					tt.name, string(data), string(reencoded))
+			}
+		})
+	}
+}
