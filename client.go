@@ -139,7 +139,7 @@ func (c *Client[T]) Connect(ctx context.Context) error {
 		return fmt.Errorf("initialize request: %w", err)
 	}
 
-	res, ok := any(resp.Result).(InitializeResult)
+	res, ok := any(resp.Result).(*InitializeResult)
 	if !ok {
 		return fmt.Errorf("invalid result")
 	}
@@ -336,7 +336,7 @@ func (c *Client[T]) ListTools(ctx context.Context, params *PaginatedRequestParam
 	}
 
 	req := &JSONRPCRequest[T]{
-		Request: &ListPromptsRequest[T]{
+		Request: &ListToolsRequest[T]{
 			Request: Request[T]{
 				Method: ListToolsRequestMethod,
 			},

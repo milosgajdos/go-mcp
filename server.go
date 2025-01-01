@@ -63,7 +63,7 @@ type Server[T ID] struct {
 
 // NewServer initializes a new MCP server.
 func NewServer[T ID](opts ...ServerOption) (*Server[T], error) {
-	options := ServerOptions{}
+	options := DefaultServerOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}

@@ -90,7 +90,9 @@ func (t *StdioTransport) writeLoop(ctx context.Context) {
 				continue
 			}
 			data = append(data, '\n')
+
 			if _, err := t.writer.Write(data); err != nil {
+				fmt.Fprintf(os.Stderr, "write error: %v\n", err)
 				continue
 			}
 			if err := t.writer.Flush(); err != nil {
@@ -112,11 +114,13 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 		default:
 			line, err := t.reader.ReadBytes('\n')
 			if err != nil {
-				if err == io.EOF || t.state.Load() == int32(stateStopped) {
+				if err == io.EOF {
+					// Just return on EOF - let the transport be closed explicitly
 					return
 				}
-				// Log error but continue trying
-				fmt.Fprintf(os.Stderr, "stdio read error: %v\n", err)
+				if t.state.Load() == int32(stateStopped) {
+					return
+				}
 				continue
 			}
 
@@ -125,7 +129,7 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 
 			msg, err := parseJSONRPCMessage(line)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "parse message error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "stdio parse JSONRPC message error: %v\n", err)
 				continue
 			}
 
@@ -173,14 +177,11 @@ func (t *StdioTransport) Close() error {
 
 	close(t.done)
 
-	// Wait for loops to finish
 	t.wg.Wait()
 
-	// Close channels
 	close(t.incoming)
 	close(t.outgoing)
 
-	// Final flush
 	return t.writer.Flush()
 }
 

@@ -570,8 +570,6 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	j.ID = respID
 	j.Version = resp.Version
 
-	// Try unmarshaling into each possible Result type
-
 	// Try CreateMessageResult
 	var msgResult CreateMessageResult
 	if err := json.Unmarshal(resp.Result, &msgResult); err == nil {
@@ -649,6 +647,13 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 
+	// Try unmarshaling into each possible Result type
+	var pingResult PingResult
+	if err := json.Unmarshal(resp.Result, &pingResult); err == nil {
+		j.Result = &pingResult
+		return nil
+	}
+
 	return fmt.Errorf("unsupported result")
 }
 
@@ -687,11 +692,12 @@ func (j *Error) UnmarshalJSON(b []byte) error {
 	if _, ok := raw["message"]; raw != nil && !ok {
 		return fmt.Errorf("field message in JSONRPCErrorError: required")
 	}
-	var e Error
-	if err := json.Unmarshal(b, &e); err != nil {
+	type aliasError Error
+	var temp aliasError
+	if err := json.Unmarshal(b, &temp); err != nil {
 		return err
 	}
-	*j = e
+	*j = Error(temp)
 	return nil
 }
 
@@ -733,11 +739,12 @@ func (j *JSONRPCError[T]) UnmarshalJSON(b []byte) error {
 	if strVal, ok := val.(string); !ok || strVal != JSONRPCVersion {
 		return fmt.Errorf("invalid jsonrpc in JSONRPCNotification: %v", val)
 	}
-	var e JSONRPCError[T]
-	if err := json.Unmarshal(b, &e); err != nil {
+	type aliasJSONRPCError JSONRPCError[T]
+	var temp aliasJSONRPCError
+	if err := json.Unmarshal(b, &temp); err != nil {
 		return err
 	}
-	*j = e
+	*j = JSONRPCError[T](temp)
 	return nil
 }
 

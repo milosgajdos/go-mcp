@@ -25,7 +25,7 @@ var (
 	// ErrPendingRequests is returned when attempting to connect while there are unhandled requests.
 	ErrPendingRequests = errors.New("pending requests")
 	// ErrResponseTimeout is returned when a request times out.
-	ErrResponseTimeout = errors.New("respose timed out")
+	ErrResponseTimeout = errors.New("response timed out")
 	// ErrInvalidMessage is returned when an invalid message is handled.
 	ErrInvalidMessage = errors.New("invalid message")
 	// ErrAlreadyConnected is returned when a connected protcol is attempted to connect again.
