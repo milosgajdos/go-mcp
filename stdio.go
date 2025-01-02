@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -128,6 +129,7 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 					}
 					return
 				}
+				log.Printf("read error: %v", err)
 				continue
 			}
 

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,120 +23,89 @@ const (
 	DefaultMaxMessageSize = 4 * 1024 * 1024 // 4MB
 )
 
-// Ensure SSETransport implements Transport interface
-var _ Transport = (*SSETransport)(nil)
-
-// SSETransport implements Transport interface using Server-Sent Events
-type SSETransport struct {
+// SSEServerTransport implements Transport interface for server-side SSE
+type SSEServerTransport[T ID] struct {
 	options TransportOptions
+	server  *http.Server
+	addr    string
 
-	// HTTP components
-	server   *http.Server
-	client   *http.Client
-	isServer bool
+	sessionID string
+	incoming  chan JSONRPCMessage
+	outgoing  chan JSONRPCMessage
+	done      chan struct{}
 
-	// Server URLs
-	serverURL string
-	postURL   string
-
-	// Message channels
-	outgoing chan JSONRPCMessage
-	incoming chan JSONRPCMessage
-	done     chan struct{}
-
-	// WaitGroup to track background goroutines
-	wg sync.WaitGroup
-
-	// Session management
-	sessionID     string
-	activeSession sync.Map // maps sessionID to writer
-
+	mu    sync.Mutex // protects server startup/shutdown
+	wg    sync.WaitGroup
 	state atomic.Int32
 }
 
-// NewSSETransport initializes a new SSE transport
-func NewSSETransport(serverURL string, opts ...TransportOption) (*SSETransport, error) {
+func NewSSEServerTransport[T ID](addr string, opts ...TransportOption) (*SSEServerTransport[T], error) {
 	options := TransportOptions{}
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	// Validate URL
-	u, err := url.Parse(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
-	}
-
-	// If no scheme is provided, assume we're in server mode
-	isServer := u.Scheme == ""
-
-	t := &SSETransport{
-		options:   options,
-		serverURL: serverURL,
-		client:    &http.Client{},
-		isServer:  isServer,
-	}
-
-	if isServer {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/sse", t.handleSSE)
-		mux.HandleFunc("/message", t.handleMessage)
-
-		t.server = &http.Server{
-			Addr:    serverURL,
-			Handler: mux,
-		}
-	}
-
-	return t, nil
+	return &SSEServerTransport[T]{
+		options: options,
+		addr:    addr,
+	}, nil
 }
 
-// Start initializes the transport
-func (t *SSETransport) Start(ctx context.Context) error {
-	if !t.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
+func (s *SSEServerTransport[T]) Start(context.Context) error {
+	if !s.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
 		return ErrTransportStarted
 	}
 
-	t.outgoing = make(chan JSONRPCMessage, 100)
-	t.incoming = make(chan JSONRPCMessage, 100)
-	t.done = make(chan struct{})
+	// prevents race conditions when closing
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// Generate session ID
-	t.sessionID = uuid.NewString()
+	s.sessionID = uuid.NewString()
 
-	if t.isServer {
-		// Start server
-		t.wg.Add(1)
-		go func() {
-			defer t.wg.Done()
-			if err := t.server.ListenAndServe(); err != http.ErrServerClosed {
-				fmt.Printf("server error: %v\n", err)
-			}
-		}()
-		return nil
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", s.handleSSE)
+	mux.HandleFunc("/message", s.handleMessage)
+
+	// Create the listener on :0 so we can find the actual ephemeral port
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
 
-	// Client mode: establish SSE connection
-	t.wg.Add(1)
+	// let's store that
+	s.server = &http.Server{
+		Handler: mux,
+	}
+	// Make sure we update s.addr to the actual ephemeral port
+	s.addr = ln.Addr().String()
+
+	s.incoming = make(chan JSONRPCMessage, 100)
+	s.outgoing = make(chan JSONRPCMessage, 100)
+	s.done = make(chan struct{})
+
+	ready := make(chan struct{})
+
+	// captured the locked server
+	server := s.server
+
+	s.wg.Add(1)
 	go func() {
-		defer t.wg.Done()
-		t.handleClientSSE(ctx)
+		defer s.wg.Done()
+		close(ready)
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("server error: %v\n", err)
+		}
 	}()
 
+	<-ready
 	return nil
 }
 
-func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServerTransport[T]) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "SSE not supported", http.StatusInternalServerError)
 		return
-	}
-
-	// Get or generate session ID
-	sessionID := r.URL.Query().Get("sessionId")
-	if sessionID == "" {
-		sessionID = uuid.NewString()
 	}
 
 	// Set SSE headers
@@ -142,18 +113,14 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Send endpoint URL with session ID
-	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\n\n", sessionID)
+	// Send session ID
+	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\n\n", s.sessionID)
 	flusher.Flush()
 
-	// Store writer for this session
-	t.activeSession.Store(sessionID, w)
-	defer t.activeSession.Delete(sessionID)
-
-	// Forward messages to this client
+	// Forward messages to client
 	for {
 		select {
-		case msg := <-t.outgoing:
+		case msg := <-s.outgoing:
 			data, err := json.Marshal(msg)
 			if err != nil {
 				continue
@@ -162,130 +129,201 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
-		case <-t.done:
+		case <-s.done:
 			return
 		}
 	}
 }
 
-func (t *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServerTransport[T]) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	sessionID := r.URL.Query().Get("sessionId")
-	if sessionID == "" {
-		http.Error(w, "Missing session ID", http.StatusBadRequest)
-		return
-	}
-
-	if _, ok := t.activeSession.Load(sessionID); !ok {
-		http.Error(w, "Invalid session ID", http.StatusUnauthorized)
+	if sessionID != s.sessionID {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
 		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, DefaultMaxMessageSize))
 	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
 		return
 	}
 
 	var msg JSONRPCMessage
-	if err := json.Unmarshal(body, &msg); err != nil {
-		http.Error(w, "Invalid JSON message", http.StatusBadRequest)
+	msg, err = parseJSONRPCMessage[T](body)
+	if err != nil {
+		http.Error(w, "Invalid message", http.StatusBadRequest)
 		return
 	}
 
 	select {
-	case t.incoming <- msg:
+	case s.incoming <- msg:
 		w.WriteHeader(http.StatusAccepted)
-	case <-t.done:
-		http.Error(w, "Transport closed", http.StatusServiceUnavailable)
+	case <-r.Context().Done():
+		return
+	case <-s.done:
+		return
 	default:
-		http.Error(w, "Message queue full", http.StatusServiceUnavailable)
+		http.Error(w, "Queue full", http.StatusServiceUnavailable)
 	}
 }
 
-// Send sends a message
-func (t *SSETransport) Send(ctx context.Context, msg JSONRPCMessage) error {
-	if t.state.Load() != int32(stateRunning) {
+func (s *SSEServerTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+	if s.state.Load() != int32(stateRunning) {
 		return ErrTransportClosed
 	}
 
-	if t.isServer {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case t.outgoing <- msg:
-			return nil
-		}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return nil
+	case s.outgoing <- msg:
+		return nil
 	}
-
-	// Client mode: send via POST request
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
-	}
-
-	postURL := fmt.Sprintf("%s?sessionId=%s", t.postURL, t.sessionID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected response: %s (%d)", string(body), resp.StatusCode)
-	}
-
-	return nil
 }
 
-// Receive receives a message
-func (t *SSETransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
-	if t.state.Load() != int32(stateRunning) {
+func (s *SSEServerTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+	if s.state.Load() != int32(stateRunning) {
 		return nil, ErrTransportClosed
 	}
 
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case msg := <-t.incoming:
+	case <-s.done:
+		// TODO consider if this is the right error
+		return nil, ErrTransportClosed
+	case msg := <-s.incoming:
 		return msg, nil
 	}
 }
 
-// handleClientSSE manages the client-side SSE connection
-func (t *SSETransport) handleClientSSE(ctx context.Context) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.serverURL+"/sse", nil)
+func (s *SSEServerTransport[T]) Addr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.addr
+}
+
+func (s *SSEServerTransport[T]) Close() error {
+	if !s.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
+		return nil
+	}
+
+	close(s.done)
+
+	s.mu.Lock()
+	if s.server != nil {
+		if err := s.server.Close(); err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("server close: %w", err)
+		}
+		s.server = nil
+	}
+	s.mu.Unlock()
+
+	s.wg.Wait()
+	close(s.incoming)
+	close(s.outgoing)
+
+	return nil
+}
+
+// SSEClientTransport implements Transport interface for client-side SSE
+type SSEClientTransport[T ID] struct {
+	options TransportOptions
+	client  *http.Client
+	url     string
+
+	postURL  string
+	incoming chan JSONRPCMessage
+	done     chan struct{}
+
+	wg    sync.WaitGroup
+	state atomic.Int32
+}
+
+func NewSSEClientTransport[T ID](serverURL string, opts ...TransportOption) (*SSEClientTransport[T], error) {
+	options := TransportOptions{}
+	for _, apply := range opts {
+		apply(&options)
+	}
+
+	_, err := url.Parse(serverURL)
 	if err != nil {
-		fmt.Printf("create SSE request failed: %v\n", err)
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+
+	return &SSEClientTransport[T]{
+		options:  options,
+		client:   &http.Client{},
+		url:      serverURL,
+		incoming: make(chan JSONRPCMessage, 100),
+		done:     make(chan struct{}),
+	}, nil
+}
+
+func (c *SSEClientTransport[T]) Start(ctx context.Context) error {
+	if !c.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
+		return ErrTransportStarted
+	}
+
+	started := make(chan error, 1)
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.handleClientSSE(ctx, started)
+	}()
+
+	if err := <-started; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// handleClientSSE manages the client-side SSE connection
+func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/sse", nil)
+	if err != nil {
+		errCh <- fmt.Errorf("create SSE request failed: %v", err)
 		return
 	}
 
-	resp, err := t.client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
-		fmt.Printf("SSE connection failed: %v\n", err)
+		errCh <- fmt.Errorf("SSE connection failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
+
+	errCh <- nil
 
 	reader := bufio.NewReader(resp.Body)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if err != io.EOF {
-				fmt.Printf("read SSE event failed: %v\n", err)
+			if err == io.EOF || c.state.Load() == int32(stateStopped) {
+				select {
+				case c.incoming <- &JSONRPCError[T]{
+					Version: JSONRPCVersion,
+					Err: Error{
+						Code:    JSONRPCConnectionClosed,
+						Message: "Connection closed",
+					},
+				}:
+				case <-c.done:
+				case <-ctx.Done():
+				}
+				return
 			}
-			return
+			log.Printf("read error: %v", err)
+			continue
 		}
 
 		line = strings.TrimSpace(line)
@@ -294,31 +332,59 @@ func (t *SSETransport) handleClientSSE(ctx context.Context) {
 		}
 
 		if strings.HasPrefix(line, "event: ") {
+			var msg JSONRPCMessage
 			eventType := strings.TrimPrefix(line, "event: ")
 			data, err := reader.ReadString('\n')
 			if err != nil {
-				fmt.Printf("read SSE data failed: %v\n", err)
+				select {
+				case c.incoming <- &JSONRPCError[T]{
+					Version: JSONRPCVersion,
+					Err: Error{
+						Code:    JSONRPCConnectionClosed,
+						Message: "Connection closed",
+					},
+				}:
+				case <-c.done:
+				case <-ctx.Done():
+				}
 				return
 			}
+
 			data = strings.TrimPrefix(strings.TrimSpace(data), "data: ")
 
 			switch eventType {
 			case "endpoint":
 				postURL, err := url.Parse(data)
 				if err != nil {
-					fmt.Printf("invalid endpoint URL: %v\n", err)
+					select {
+					case c.incoming <- &JSONRPCError[T]{
+						Version: JSONRPCVersion,
+						Err: Error{
+							Code:    JSONRPCConnectionClosed,
+							Message: fmt.Sprintf("parse event URL: %v", err),
+						},
+					}:
+					case <-c.done:
+					case <-ctx.Done():
+					}
 					return
 				}
-				t.postURL = postURL.String()
+				c.postURL = postURL.String()
+
 			case "message":
-				var msg JSONRPCMessage
-				if err := json.Unmarshal([]byte(data), &msg); err != nil {
-					fmt.Printf("invalid message data: %v\n", err)
-					continue
+				msg, err = parseJSONRPCMessage[T]([]byte(data))
+				if err != nil {
+					msg = &JSONRPCError[T]{
+						Version: JSONRPCVersion,
+						Err: Error{
+							Code:    JSONRPCParseError,
+							Message: err.Error(),
+						},
+					}
 				}
 				select {
-				case t.incoming <- msg:
-				case <-t.done:
+				case c.incoming <- msg:
+				case <-c.done:
 					return
 				case <-ctx.Done():
 					return
@@ -328,24 +394,71 @@ func (t *SSETransport) handleClientSSE(ctx context.Context) {
 	}
 }
 
-// Close terminates the transport
-func (t *SSETransport) Close() error {
-	if !t.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
+func (c *SSEClientTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+	if c.state.Load() != int32(stateRunning) {
+		return ErrTransportClosed
+	}
+
+	if c.postURL == "" {
+		return fmt.Errorf("no endpoint URL")
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.postURL, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+	if c.state.Load() != int32(stateRunning) {
+		return nil, ErrTransportClosed
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.done:
+		// TODO consider if this is the right error
+		return nil, ErrTransportClosed
+	case msg := <-c.incoming:
+		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {
+			errMsg, ok := msg.(*JSONRPCError[T])
+			if ok {
+				if errMsg.Err.Code == JSONRPCConnectionClosed {
+					return nil, ErrTransportIO
+				}
+			}
+		}
+		return msg, nil
+	}
+}
+
+func (c *SSEClientTransport[T]) Close() error {
+	if !c.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
 		return nil
 	}
 
-	close(t.done)
-
-	if t.server != nil {
-		if err := t.server.Close(); err != nil {
-			return fmt.Errorf("close server: %w", err)
-		}
-	}
-
-	t.wg.Wait()
-
-	close(t.incoming)
-	close(t.outgoing)
+	close(c.done)
+	c.wg.Wait()
+	close(c.incoming)
 
 	return nil
 }
