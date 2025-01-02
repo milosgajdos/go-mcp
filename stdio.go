@@ -12,7 +12,7 @@ import (
 )
 
 // StdioTransport implements Transport interface using stdin/stdout
-type StdioTransport struct {
+type StdioTransport[T ID] struct {
 	options TransportOptions
 	reader  *bufio.Reader
 	writer  *bufio.Writer
@@ -30,44 +30,44 @@ type StdioTransport struct {
 	state atomic.Int32
 }
 
-func NewStdioTransport(opts ...TransportOption) *StdioTransport {
+func NewStdioTransport[T ID](opts ...TransportOption) *StdioTransport[T] {
 	options := TransportOptions{}
 	for _, apply := range opts {
 		apply(&options)
 	}
-	return &StdioTransport{
+	return &StdioTransport[T]{
 		options: options,
 		reader:  bufio.NewReader(os.Stdin),
 		writer:  bufio.NewWriter(os.Stdout),
 	}
 }
 
-func (t *StdioTransport) Start(ctx context.Context) error {
-	if !t.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
+func (s *StdioTransport[T]) Start(ctx context.Context) error {
+	if !s.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
 		return ErrTransportStarted
 	}
 
-	t.outgoing = make(chan JSONRPCMessage, 100)
-	t.incoming = make(chan JSONRPCMessage, 100)
-	t.done = make(chan struct{})
+	s.outgoing = make(chan JSONRPCMessage, 100)
+	s.incoming = make(chan JSONRPCMessage, 100)
+	s.done = make(chan struct{})
 
 	readReady := make(chan struct{})
 	writeReady := make(chan struct{})
 
 	// Start the read loop
-	t.wg.Add(1)
+	s.wg.Add(1)
 	go func() {
-		defer t.wg.Done()
+		defer s.wg.Done()
 		close(readReady)
-		t.readLoop(ctx)
+		s.readLoop(ctx)
 	}()
 
 	// Start the write loop
-	t.wg.Add(1)
+	s.wg.Add(1)
 	go func() {
-		defer t.wg.Done()
+		defer s.wg.Done()
 		close(writeReady)
-		t.writeLoop(ctx)
+		s.writeLoop(ctx)
 	}()
 
 	// Wait for loops to be "ready"
@@ -77,25 +77,25 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	return nil
 }
 
-func (t *StdioTransport) writeLoop(ctx context.Context) {
+func (s *StdioTransport[T]) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.done:
+		case <-s.done:
 			return
-		case msg := <-t.outgoing:
+		case msg := <-s.outgoing:
 			data, err := json.Marshal(msg)
 			if err != nil {
 				continue
 			}
 			data = append(data, '\n')
 
-			if _, err := t.writer.Write(data); err != nil {
+			if _, err := s.writer.Write(data); err != nil {
 				fmt.Fprintf(os.Stderr, "write error: %v\n", err)
 				continue
 			}
-			if err := t.writer.Flush(); err != nil {
+			if err := s.writer.Flush(); err != nil {
 				fmt.Fprintf(os.Stderr, "flush error: %v\n", err)
 				continue
 			}
@@ -104,21 +104,28 @@ func (t *StdioTransport) writeLoop(ctx context.Context) {
 }
 
 // readLoop continuously reads from stdin and puts messages on incoming channel
-func (t *StdioTransport) readLoop(ctx context.Context) {
+func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.done:
+		case <-s.done:
 			return
 		default:
-			line, err := t.reader.ReadBytes('\n')
+			line, err := s.reader.ReadBytes('\n')
 			if err != nil {
-				if err == io.EOF {
-					// Just return on EOF - let the transport be closed explicitly
-					return
-				}
-				if t.state.Load() == int32(stateStopped) {
+				if err == io.EOF || s.state.Load() == int32(stateStopped) {
+					select {
+					case s.incoming <- &JSONRPCError[T]{
+						Version: JSONRPCVersion,
+						Err: Error{
+							Code:    JSONRPCConnectionClosed,
+							Message: "Connection closed",
+						},
+					}:
+					case <-s.done:
+					case <-ctx.Done():
+					}
 					return
 				}
 				continue
@@ -127,66 +134,84 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 			// Remove trailing newline
 			line = line[:len(line)-1]
 
-			msg, err := parseJSONRPCMessage(line)
+			msg, err := parseJSONRPCMessage[T](line)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "stdio parse JSONRPC message error: %v\n", err)
-				continue
+				msg = &JSONRPCError[T]{
+					Version: JSONRPCVersion,
+					Err: Error{
+						Code:    JSONRPCParseError,
+						Message: err.Error(),
+					},
+				}
 			}
 
 			select {
-			case t.incoming <- msg:
+			case s.incoming <- msg:
 			case <-ctx.Done():
 				return
-			case <-t.done:
+			case <-s.done:
 				return
 			}
 		}
 	}
 }
 
-func (t *StdioTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
-	if t.state.Load() != int32(stateRunning) {
+func (s *StdioTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+	if s.state.Load() != int32(stateRunning) {
 		return ErrTransportClosed
 	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case t.outgoing <- msg:
+	case <-s.done:
+		return nil
+	case s.outgoing <- msg:
 		return nil
 	}
 }
 
-func (t *StdioTransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
-	if t.state.Load() != int32(stateRunning) {
+func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+	if s.state.Load() != int32(stateRunning) {
 		return nil, ErrTransportClosed
 	}
 
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case msg := <-t.incoming:
+	case <-s.done:
+		// TODO consider if this is the right error
+		return nil, ErrTransportClosed
+	case msg := <-s.incoming:
+		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {
+			errMsg, ok := msg.(*JSONRPCError[T])
+			if ok {
+				if errMsg.Err.Code == JSONRPCConnectionClosed {
+					return nil, ErrTransportIO
+				}
+			}
+		}
 		return msg, nil
 	}
 }
 
-func (t *StdioTransport) Close() error {
-	if !t.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
+func (s *StdioTransport[T]) Close() error {
+	if !s.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
 		return nil
 	}
 
-	close(t.done)
+	close(s.done)
 
-	t.wg.Wait()
+	s.wg.Wait()
 
-	close(t.incoming)
-	close(t.outgoing)
+	close(s.incoming)
+	close(s.outgoing)
 
-	return t.writer.Flush()
+	return s.writer.Flush()
 }
 
 // parseJSONRPCMessage attempts to parse a JSON-RPC message from raw bytes
-func parseJSONRPCMessage(data []byte) (JSONRPCMessage, error) {
+func parseJSONRPCMessage[T ID](data []byte) (JSONRPCMessage, error) {
 	// First unmarshal to get the basic structure
 	var base struct {
 		Version string          `json:"jsonrpc"`
@@ -202,7 +227,7 @@ func parseJSONRPCMessage(data []byte) (JSONRPCMessage, error) {
 	// Determine message type based on fields
 	if len(base.ID) > 0 {
 		if len(base.Error) > 0 {
-			var msg JSONRPCError[uint64]
+			var msg JSONRPCError[T]
 			if err := json.Unmarshal(data, &msg); err != nil {
 				return nil, fmt.Errorf("invalid JSON-RPC error: %w", err)
 			}
@@ -210,14 +235,14 @@ func parseJSONRPCMessage(data []byte) (JSONRPCMessage, error) {
 		}
 
 		if len(base.Method) > 0 {
-			var msg JSONRPCRequest[uint64]
+			var msg JSONRPCRequest[T]
 			if err := json.Unmarshal(data, &msg); err != nil {
 				return nil, fmt.Errorf("invalid JSON-RPC request: %w", err)
 			}
 			return &msg, nil
 		}
 
-		var msg JSONRPCResponse[uint64]
+		var msg JSONRPCResponse[T]
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return nil, fmt.Errorf("invalid JSON-RPC response: %w", err)
 		}
@@ -225,7 +250,7 @@ func parseJSONRPCMessage(data []byte) (JSONRPCMessage, error) {
 	}
 
 	if len(base.Method) > 0 {
-		var msg JSONRPCNotification[uint64]
+		var msg JSONRPCNotification[T]
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return nil, fmt.Errorf("invalid JSON-RPC notification: %w", err)
 		}
