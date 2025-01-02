@@ -231,7 +231,10 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 
 	if p.transport != nil {
 		if err := p.transport.Close(); err != nil {
-			return err
+			if !errors.Is(err, ErrTransportClosed) &&
+				!errors.Is(err, context.Canceled) {
+				return err
+			}
 		}
 	}
 
@@ -322,11 +325,13 @@ func (p *Protocol[T]) recvMsg() {
 		default:
 			msg, err := p.transport.Receive(p.ctx)
 			if err != nil {
-				// Handle specific error cases
-				if errors.Is(err, ErrTransportClosed) || errors.Is(err, context.Canceled) {
+				// irrecoverable transport  errors
+				if errors.Is(err, ErrTransportClosed) ||
+					errors.Is(err, ErrTransportIO) ||
+					errors.Is(err, context.Canceled) {
 					// Transport closed or context cancelled - clean shutdown
-					if closeErr := p.Close(context.Background()); closeErr != nil {
-						log.Printf("shutting down: %v", closeErr)
+					if cErr := p.Close(context.Background()); cErr != nil {
+						log.Printf("shutting down: %v", cErr)
 					}
 					return
 				}

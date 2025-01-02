@@ -20,7 +20,7 @@ func main() {
 
 	log.Printf("starting up...")
 
-	transport := mcp.NewStdioTransport()
+	transport := mcp.NewStdioTransport[uint64]()
 
 	client, err := mcp.NewClient[uint64](
 		mcp.WithClientTransport(transport),

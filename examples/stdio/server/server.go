@@ -22,7 +22,7 @@ func main() {
 
 	log.Printf("starting up...")
 
-	transport := mcp.NewStdioTransport()
+	transport := mcp.NewStdioTransport[uint64]()
 
 	server, err := mcp.NewServer[uint64](
 		mcp.WithServerTransport(transport),
@@ -50,4 +50,5 @@ func main() {
 	if err := server.Close(ctx); err != nil {
 		log.Printf("error closing server: %v", err)
 	}
+	log.Println("shut down")
 }

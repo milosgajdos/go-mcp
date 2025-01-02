@@ -10,15 +10,15 @@ import (
 	"testing"
 )
 
-func StdioTransportMustStart(ctx context.Context, t *testing.T) *StdioTransport {
-	tr := NewStdioTransport()
+func StdioTransportMustStart[T ID](ctx context.Context, t *testing.T) *StdioTransport[T] {
+	tr := NewStdioTransport[T]()
 	if err := tr.Start(ctx); err != nil {
 		t.Errorf("Start() error = %v, want %v", err, context.Canceled)
 	}
 	return tr
 }
 
-func StdioTransportMustClose(_ context.Context, t *testing.T, tr *StdioTransport) {
+func StdioTransportMustClose[T ID](_ context.Context, t *testing.T, tr *StdioTransport[T]) {
 	if err := tr.Close(); err != nil {
 		t.Fatalf("failed closing transport: %v", err)
 	}
@@ -26,7 +26,7 @@ func StdioTransportMustClose(_ context.Context, t *testing.T, tr *StdioTransport
 
 func TestStdioTransport_Start(t *testing.T) {
 	t.Run("successful start", func(t *testing.T) {
-		tr := NewStdioTransport()
+		tr := NewStdioTransport[uint64]()
 		if err := tr.Start(context.Background()); err != nil {
 			t.Errorf("Start() error = %v", err)
 		}
@@ -34,7 +34,7 @@ func TestStdioTransport_Start(t *testing.T) {
 	})
 
 	t.Run("double start", func(t *testing.T) {
-		tr := NewStdioTransport()
+		tr := NewStdioTransport[uint64]()
 		if err := tr.Start(context.Background()); err != nil {
 			t.Fatalf("First Start() error = %v", err)
 		}
@@ -57,7 +57,7 @@ func TestStdioTransport_Send(t *testing.T) {
 
 		// 2) Start transport
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 
 		msg := &JSONRPCRequest[uint64]{
 			Request: &PingRequest[uint64]{
@@ -101,7 +101,7 @@ func TestStdioTransport_Send(t *testing.T) {
 	})
 
 	t.Run("send before start", func(t *testing.T) {
-		tr := NewStdioTransport()
+		tr := NewStdioTransport[uint64]()
 		if err := tr.Send(context.Background(), nil); !errors.Is(err, ErrTransportClosed) {
 			t.Errorf("Send() error = %v, want '%v'", err, ErrTransportClosed)
 		}
@@ -109,7 +109,7 @@ func TestStdioTransport_Send(t *testing.T) {
 
 	t.Run("send after close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 		StdioTransportMustClose(context.Background(), t, tr)
 
 		err := tr.Send(context.Background(), nil)
@@ -130,7 +130,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 		os.Stdin = r
 
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 
 		// Write a test message to the pipe
 		msg := &JSONRPCRequest[uint64]{
@@ -175,7 +175,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 	})
 
 	t.Run("receive before start", func(t *testing.T) {
-		tr := NewStdioTransport()
+		tr := NewStdioTransport[uint64]()
 		if _, err := tr.Receive(context.Background()); !errors.Is(err, ErrTransportClosed) {
 			t.Errorf("Receive() error = %v, want '%v'", err, ErrTransportClosed)
 		}
@@ -183,7 +183,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 
 	t.Run("receive after close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
@@ -196,7 +196,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 
 func TestStdioTransport_Close(t *testing.T) {
 	t.Run("close before start", func(t *testing.T) {
-		tr := NewStdioTransport()
+		tr := NewStdioTransport[uint64]()
 		if err := tr.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
@@ -204,7 +204,7 @@ func TestStdioTransport_Close(t *testing.T) {
 
 	t.Run("successful close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
@@ -212,7 +212,7 @@ func TestStdioTransport_Close(t *testing.T) {
 
 	t.Run("multiple close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart(ctx, t)
+		tr := StdioTransportMustStart[uint64](ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Fatalf("First Close() error = %v", err)
 		}
