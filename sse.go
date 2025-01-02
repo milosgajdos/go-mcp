@@ -369,7 +369,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 					}
 					return
 				}
-				c.postURL = postURL.String()
+				c.postURL = c.url + postURL.String()
 
 			case "message":
 				msg, err = parseJSONRPCMessage[T]([]byte(data))
