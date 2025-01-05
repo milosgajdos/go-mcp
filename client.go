@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 )
@@ -9,6 +10,10 @@ import (
 const (
 	clientName    = "githuh.com/milosgajdos/go-mcp"
 	clientVersion = "v0.unknown"
+)
+
+var (
+	ErrInvalidResponse = errors.New("invalid JSON-RPC response")
 )
 
 // ClientOptions configure client.
@@ -136,9 +141,9 @@ func (c *Client[T]) Connect(ctx context.Context) error {
 		return fmt.Errorf("initialize request: %w", err)
 	}
 
-	res, ok := any(resp.Result).(*InitializeResult)
+	res, ok := resp.Result.(*InitializeResult)
 	if !ok {
-		return fmt.Errorf("invalid result")
+		return ErrInvalidResponse
 	}
 	c.serverInfo = res.ServerInfo
 	c.serverCaps = copyServerCaps(res.Capabilities)
@@ -180,7 +185,11 @@ func (c *Client[T]) Complete(ctx context.Context, params CompleteRequestParams) 
 		return nil, err
 	}
 
-	return any(resp.Result).(*CompleteResult), nil
+	if res, ok := resp.Result.(*CompleteResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // ListPrompts retrieves a list of available prompts.
@@ -204,7 +213,11 @@ func (c *Client[T]) ListPrompts(ctx context.Context, params *PaginatedRequestPar
 		return nil, err
 	}
 
-	return any(resp.Result).(*ListPromptsResult), nil
+	if res, ok := resp.Result.(*ListPromptsResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // GetPrompt retrieves a specific prompt.
@@ -228,7 +241,11 @@ func (c *Client[T]) GetPrompt(ctx context.Context, params GetPromptRequestParams
 		return nil, err
 	}
 
-	return any(resp.Result).(*GetPromptResult), nil
+	if res, ok := resp.Result.(*GetPromptResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // ListResources retrieves a list of resources.
@@ -252,7 +269,11 @@ func (c *Client[T]) ListResources(ctx context.Context, params *PaginatedRequestP
 		return nil, err
 	}
 
-	return any(resp.Result).(*ListResourcesResult), nil
+	if res, ok := resp.Result.(*ListResourcesResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 func (c *Client[T]) ListResourceTemplatesRequest(ctx context.Context, params *PaginatedRequestParams) (*ListResourceTemplatesResult, error) {
@@ -275,7 +296,11 @@ func (c *Client[T]) ListResourceTemplatesRequest(ctx context.Context, params *Pa
 		return nil, err
 	}
 
-	return any(resp.Result).(*ListResourceTemplatesResult), nil
+	if res, ok := resp.Result.(*ListResourceTemplatesResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // ReadResource reads the content of a specific resource.
@@ -299,7 +324,11 @@ func (c *Client[T]) ReadResource(ctx context.Context, params ReadResourceRequest
 		return nil, err
 	}
 
-	return any(resp.Result).(*ReadResourceResult), nil
+	if res, ok := resp.Result.(*ReadResourceResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // CallTool sends a tool call request.
@@ -323,7 +352,11 @@ func (c *Client[T]) CallTool(ctx context.Context, params CallToolRequestParams) 
 		return nil, err
 	}
 
-	return any(resp.Result).(*CallToolResult), nil
+	if res, ok := resp.Result.(*CallToolResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // ListTools retrieves a list of available tools.
@@ -347,7 +380,11 @@ func (c *Client[T]) ListTools(ctx context.Context, params *PaginatedRequestParam
 		return nil, err
 	}
 
-	return any(resp.Result).(*ListToolsResult), nil
+	if res, ok := resp.Result.(*ListToolsResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // SubscribeResource subscribes to updates for a specific resource.

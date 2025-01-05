@@ -306,7 +306,11 @@ func (s *Server[T]) CreateMessage(ctx context.Context, params CreateMessageReque
 		return nil, err
 	}
 
-	return any(resp.Result).(*CreateMessageResult), nil
+	if res, ok := resp.Result.(*CreateMessageResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 // ListRoots sends a list roots request.
@@ -328,7 +332,11 @@ func (s *Server[T]) ListRoots(ctx context.Context) (*ListRootsResult, error) {
 		return nil, err
 	}
 
-	return any(resp.Result).(*ListRootsResult), nil
+	if res, ok := resp.Result.(*ListRootsResult); ok {
+		return res, nil
+	}
+
+	return nil, ErrInvalidResponse
 }
 
 func (s *Server[T]) assertClientCaps(method RequestMethod) error {
