@@ -182,7 +182,6 @@ func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.done:
-		// TODO consider if this is the right error
 		return nil, ErrTransportClosed
 	case msg := <-s.incoming:
 		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {

@@ -93,7 +93,7 @@ func (s *SSEServerTransport[T]) Start(context.Context) error {
 		defer s.wg.Done()
 		close(ready)
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("server error: %v\n", err)
+			log.Printf("server error: %v\n", err)
 		}
 	}()
 

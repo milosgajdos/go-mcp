@@ -8,47 +8,50 @@ import (
 
 const (
 	clientName    = "githuh.com/milosgajdos/go-mcp"
-	clientVersion = "v1.alpha"
+	clientVersion = "v0.unknown"
 )
 
-type ClientOptions struct {
+// ClientOptions configure client.
+type ClientOptions[T ID] struct {
 	EnforceCaps  bool
-	Transport    Transport
+	Protocol     *Protocol[T]
 	Info         Implementation
 	Capabilities ClientCapabilities
 }
 
-type ClientOption func(*ClientOptions)
+type ClientOption[T ID] func(*ClientOptions[T])
 
-func WithClientEnforceCaps() ClientOption {
-	return func(o *ClientOptions) {
+// WithClientEnforceCaps enforces server capability checks.
+func WithClientEnforceCaps[T ID]() ClientOption[T] {
+	return func(o *ClientOptions[T]) {
 		o.EnforceCaps = true
 	}
 }
 
-// WithTransport sets protocol transport.
-func WithClientTransport(tr Transport) ClientOption {
-	return func(o *ClientOptions) {
-		o.Transport = tr
+// WithClientProtocol configures client Protocol.
+func WithClientProtocol[T ID](p *Protocol[T]) ClientOption[T] {
+	return func(o *ClientOptions[T]) {
+		o.Protocol = p
 	}
 }
 
-// WithInfo sets client implementation info.
-func WithClientInfo(info Implementation) ClientOption {
-	return func(o *ClientOptions) {
+// WithClientInfo sets client implementation info.
+func WithClientInfo[T ID](info Implementation) ClientOption[T] {
+	return func(o *ClientOptions[T]) {
 		o.Info = info
 	}
 }
 
 // WithClientCapabilities sets client capabilities.
-func WithClientCapabilities(caps ClientCapabilities) ClientOption {
-	return func(o *ClientOptions) {
+func WithClientCapabilities[T ID](caps ClientCapabilities) ClientOption[T] {
+	return func(o *ClientOptions[T]) {
 		o.Capabilities = caps
 	}
 }
 
-func DefaultClientOptions() ClientOptions {
-	return ClientOptions{
+// DefaultClientOptions initializes default client options.
+func DefaultClientOptions[T ID]() ClientOptions[T] {
+	return ClientOptions[T]{
 		Info: Implementation{
 			Name:    clientName,
 			Version: clientVersion,
@@ -57,7 +60,7 @@ func DefaultClientOptions() ClientOptions {
 }
 
 type Client[T ID] struct {
-	options    ClientOptions
+	options    ClientOptions[T]
 	protocol   *Protocol[T]
 	caps       ClientCapabilities
 	serverInfo Implementation
@@ -66,20 +69,14 @@ type Client[T ID] struct {
 }
 
 // NewClient initializes a new MCP client.
-func NewClient[T ID](opts ...ClientOption) (*Client[T], error) {
-	options := DefaultClientOptions()
+func NewClient[T ID](opts ...ClientOption[T]) (*Client[T], error) {
+	options := DefaultClientOptions[T]()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	// NOTE: consider using In-memory transport as default
-	if options.Transport == nil {
-		return nil, ErrInvalidTransport
-	}
-
-	protocol := NewProtocol[T](WithTransport(options.Transport))
 	return &Client[T]{
-		protocol: protocol,
+		protocol: options.Protocol,
 		options:  options,
 		caps:     options.Capabilities,
 	}, nil
@@ -143,8 +140,8 @@ func (c *Client[T]) Connect(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("invalid result")
 	}
-	c.serverCaps = DeepCopyCapabilities(res.Capabilities)
 	c.serverInfo = res.ServerInfo
+	c.serverCaps = copyServerCaps(res.Capabilities)
 
 	notif := &JSONRPCNotification[T]{
 		Notification: &InitializedNotification{
@@ -460,8 +457,7 @@ func (c *Client[T]) assertCaps(method RequestMethod) error {
 	return nil
 }
 
-func DeepCopyCapabilities(caps ServerCapabilities) ServerCapabilities {
-	// Deep copy maps and pointers
+func copyServerCaps(caps ServerCapabilities) ServerCapabilities {
 	experimental := make(ServerCapabilitiesExperimental, len(caps.Experimental))
 	for k, v := range caps.Experimental {
 		experimental[k] = make(map[string]any, len(v))

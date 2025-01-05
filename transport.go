@@ -8,7 +8,7 @@ import (
 
 var (
 	// ErrTransportStarted is returned when starting already started transport.
-	ErrTransportStarted = errors.New("transport already started")
+	ErrTransportStarted = errors.New("transport started")
 	// ErrTransportClosed is returned when the transport has been closed.
 	ErrTransportClosed = errors.New("transport closed")
 	// ErrTransportIO is returned when transport IO error appens.
