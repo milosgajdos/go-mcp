@@ -314,11 +314,10 @@ func (p *Protocol[T]) recvMsg() {
 			if err != nil {
 				// irrecoverable transport  errors
 				if errors.Is(err, ErrTransportClosed) ||
-					errors.Is(err, ErrTransportIO) ||
 					errors.Is(err, context.Canceled) {
 					// Transport closed or context cancelled - clean shutdown
 					if cErr := p.Close(context.Background()); cErr != nil {
-						log.Printf("shutting down: %v", cErr)
+						log.Printf("close protocol: %v", cErr)
 					}
 					return
 				}

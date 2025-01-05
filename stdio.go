@@ -121,7 +121,7 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 						Version: JSONRPCVersion,
 						Err: Error{
 							Code:    JSONRPCConnectionClosed,
-							Message: "Connection closed",
+							Message: ErrTransportClosed.Error(),
 						},
 					}:
 					case <-s.done:
@@ -129,7 +129,7 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 					}
 					return
 				}
-				log.Printf("read error: %v", err)
+				fmt.Fprintf(os.Stderr, "read error: %v\n", err)
 				continue
 			}
 
@@ -167,7 +167,7 @@ func (s *StdioTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.done:
-		return nil
+		return ErrTransportClosed
 	case s.outgoing <- msg:
 		return nil
 	}
@@ -188,7 +188,10 @@ func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error)
 			errMsg, ok := msg.(*JSONRPCError[T])
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
-					return nil, ErrTransportIO
+					if err := s.Close(); err != nil {
+						log.Printf("close transport: %v", err)
+					}
+					return nil, ErrTransportClosed
 				}
 			}
 		}

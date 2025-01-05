@@ -11,8 +11,6 @@ var (
 	ErrTransportStarted = errors.New("transport started")
 	// ErrTransportClosed is returned when the transport has been closed.
 	ErrTransportClosed = errors.New("transport closed")
-	// ErrTransportIO is returned when transport IO error appens.
-	ErrTransportIO = errors.New("transport IO")
 	// ErrSendTimeout is returned when transport send times out
 	ErrSendTimeout = errors.New("send timeout")
 	//ErrRecvTimeout is returned when transporti receive times out
