@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -443,7 +444,17 @@ func TestNotificationMessages(t *testing.T) {
 				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
-			if string(data) != string(reencoded) {
+			// Unmarshal both original and re-encoded JSON into maps
+			var originalMap, reencodedMap map[string]any
+			if err := json.Unmarshal(data, &originalMap); err != nil {
+				t.Errorf("Failed to unmarshal original JSON: %v", err)
+			}
+			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
+				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+			}
+
+			// Compare the maps
+			if !reflect.DeepEqual(originalMap, reencodedMap) {
 				t.Errorf("Re-encoded %s doesn't match original.\nOriginal: %s\nRe-encoded: %s",
 					tt.name, string(data), string(reencoded))
 			}
@@ -456,6 +467,19 @@ func TestResponseMessages(t *testing.T) {
 		name     string
 		response JSONRPCResponse[uint64]
 	}{
+		{
+			name: "PingResult",
+			response: JSONRPCResponse[uint64]{
+				Result: &PingResult{
+					Result: Result{
+						Meta: ResultMeta{
+							"msg": "pingResult",
+						},
+					},
+				},
+				Version: JSONRPCVersion,
+			},
+		},
 		{
 			name: "CreateMessageResult",
 			response: JSONRPCResponse[uint64]{
@@ -727,7 +751,17 @@ func TestResponseMessages(t *testing.T) {
 				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
-			if string(data) != string(reencoded) {
+			// Unmarshal both original and re-encoded JSON into maps
+			var originalMap, reencodedMap map[string]any
+			if err := json.Unmarshal(data, &originalMap); err != nil {
+				t.Errorf("Failed to unmarshal original JSON: %v", err)
+			}
+			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
+				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+			}
+
+			// Compare the maps
+			if !reflect.DeepEqual(originalMap, reencodedMap) {
 				t.Errorf("Re-encoded %s doesn't match original.\nOriginal: %s\nRe-encoded: %s",
 					tt.name, string(data), string(reencoded))
 			}
@@ -735,7 +769,7 @@ func TestResponseMessages(t *testing.T) {
 	}
 }
 
-func TestJSONRPCErrorMessages(t *testing.T) {
+func TestErrorMessages(t *testing.T) {
 	tests := []struct {
 		name  string
 		error JSONRPCError[uint64]
@@ -809,7 +843,17 @@ func TestJSONRPCErrorMessages(t *testing.T) {
 				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
-			if string(data) != string(reencoded) {
+			// Unmarshal both original and re-encoded JSON into maps
+			var originalMap, reencodedMap map[string]any
+			if err := json.Unmarshal(data, &originalMap); err != nil {
+				t.Errorf("Failed to unmarshal original JSON: %v", err)
+			}
+			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
+				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+			}
+
+			// Compare the maps
+			if !reflect.DeepEqual(originalMap, reencodedMap) {
 				t.Errorf("Re-encoded %s doesn't match original.\nOriginal: %s\nRe-encoded: %s",
 					tt.name, string(data), string(reencoded))
 			}

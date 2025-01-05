@@ -35,6 +35,7 @@ type NotificationT[T ID] interface {
 }
 
 // ResultT must be implemented by all Results.
+// NOTE: this isn't really used at the moment.
 type ResultT interface {
 	isResult()
 }
@@ -527,7 +528,7 @@ func (j *JSONRPCNotification[T]) UnmarshalJSON(b []byte) error {
 // A successful (non-error) response to a request.
 type JSONRPCResponse[T ID] struct {
 	// Result for a specific RPC Result.
-	Result ResultT `json:"result"`
+	Result any `json:"result"`
 	// ID corresponds to the JSON schema field "id".
 	ID RequestID[T] `json:"id"`
 	// Version corresponds to the JSON schema field "jsonrpc".
@@ -545,7 +546,7 @@ func (j JSONRPCResponse[T]) JSONRPCMessageType() JSONRPCMessageType {
 // We might want to switch to `any` and lose type safety.
 func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	var resp struct {
-		Result  json.RawMessage `json:"result"`
+		Result  any             `json:"result"`
 		ID      json.RawMessage `json:"id"`
 		Version string          `json:"jsonrpc"`
 	}
@@ -555,14 +556,14 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	if len(resp.ID) == 0 {
 		return fmt.Errorf("field 'id' in JSONRPCRequest: required")
 	}
-	if len(resp.Result) == 0 {
+	if resp.Result == nil {
 		return fmt.Errorf("field result in JSONRPCResponse: required")
 	}
 	if resp.Version != JSONRPCVersion {
 		return fmt.Errorf("invalid jsonrpc version JSONRPCResponse: %q", resp.Version)
 	}
 
-	// parse the ID
+	// Parse the ID
 	var respID RequestID[T]
 	if err := json.Unmarshal(resp.ID, &respID); err != nil {
 		return fmt.Errorf("failed to unmarshal 'id': %w", err)
@@ -570,91 +571,9 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 	j.ID = respID
 	j.Version = resp.Version
 
-	// Try CreateMessageResult
-	var msgResult CreateMessageResult
-	if err := json.Unmarshal(resp.Result, &msgResult); err == nil {
-		j.Result = &msgResult
-		return nil
-	}
-
-	// Try ListRootsResult
-	var listRootsResult ListRootsResult
-	if err := json.Unmarshal(resp.Result, &listRootsResult); err == nil {
-		j.Result = &listRootsResult
-		return nil
-	}
-
-	// Try InitializeResult
-	var initResult InitializeResult
-	if err := json.Unmarshal(resp.Result, &initResult); err == nil {
-		j.Result = &initResult
-		return nil
-	}
-
-	// Try CompleteResult
-	var compResult CompleteResult
-	if err := json.Unmarshal(resp.Result, &compResult); err == nil {
-		j.Result = &compResult
-		return nil
-	}
-
-	// Try GetPromptResult
-	var getPrResult GetPromptResult
-	if err := json.Unmarshal(resp.Result, &getPrResult); err == nil {
-		j.Result = &getPrResult
-		return nil
-	}
-
-	// Try ListPromptsResult
-	var listPrResult ListPromptsResult
-	if err := json.Unmarshal(resp.Result, &listPrResult); err == nil {
-		j.Result = &listPrResult
-		return nil
-	}
-
-	// Try ListResourcesResult
-	var listResResult ListResourcesResult
-	if err := json.Unmarshal(resp.Result, &listResResult); err == nil {
-		j.Result = &listResResult
-		return nil
-	}
-
-	// Try ListResourceTemplatesResult
-	var listTemplRes ListResourceTemplatesResult
-	if err := json.Unmarshal(resp.Result, &listTemplRes); err == nil {
-		j.Result = &listTemplRes
-		return nil
-	}
-
-	// Try ReadResourceResult
-	var readResResult ReadResourceResult
-	if err := json.Unmarshal(resp.Result, &readResResult); err == nil {
-		j.Result = &readResResult
-		return nil
-	}
-
-	// Try CallToolResult
-	var callToolRes CallToolResult
-	if err := json.Unmarshal(resp.Result, &callToolRes); err == nil {
-		j.Result = &callToolRes
-		return nil
-	}
-
-	// Try ListToolsResult
-	var listToolsRes ListToolsResult
-	if err := json.Unmarshal(resp.Result, &listToolsRes); err == nil {
-		j.Result = &listToolsRes
-		return nil
-	}
-
-	// Try unmarshaling into each possible Result type
-	var pingResult PingResult
-	if err := json.Unmarshal(resp.Result, &pingResult); err == nil {
-		j.Result = &pingResult
-		return nil
-	}
-
-	return fmt.Errorf("unsupported result")
+	// Assign the Result
+	j.Result = resp.Result
+	return nil
 }
 
 type JSONRPCErrorCode int
