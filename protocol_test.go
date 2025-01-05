@@ -7,10 +7,18 @@ import (
 	"time"
 )
 
+func MustNewProtocol[T ID](t *testing.T, opts ...Option) *Protocol[T] {
+	p, err := NewProtocol[T](opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestProtocol_Connect(t *testing.T) {
 	t.Run("Successful Connect", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -22,7 +30,7 @@ func TestProtocol_Connect(t *testing.T) {
 
 	t.Run("Already Connected", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -33,7 +41,7 @@ func TestProtocol_Connect(t *testing.T) {
 	})
 
 	t.Run("Invalid Transport", func(t *testing.T) {
-		invalidProtocol := NewProtocol[uint64](WithTransport(nil)) // nil transport
+		invalidProtocol := MustNewProtocol[uint64](t, WithTransport(nil)) // nil transport
 		if err := invalidProtocol.Connect(); err == nil || err != ErrInvalidTransport {
 			t.Fatalf("Expected invalid transport error, got: %v", err)
 		}
@@ -43,7 +51,7 @@ func TestProtocol_Connect(t *testing.T) {
 func TestProtocol_Close(t *testing.T) {
 	t.Run("Successful Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -58,7 +66,7 @@ func TestProtocol_Close(t *testing.T) {
 
 	t.Run("Close When Already Closed", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -73,7 +81,7 @@ func TestProtocol_Close(t *testing.T) {
 
 	t.Run("Close With Pending Requests", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -94,9 +102,9 @@ func TestProtocol_Close(t *testing.T) {
 func TestProtocol_SendRequest(t *testing.T) {
 	t.Run("Successful Request Response", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](
+		p := MustNewProtocol[uint64](t,
 			WithTransport(tr),
-			WithReqTimeout(100*time.Millisecond),
+			WithRespTimeout(100*time.Millisecond),
 		)
 
 		if err := p.Connect(); err != nil {
@@ -138,9 +146,9 @@ func TestProtocol_SendRequest(t *testing.T) {
 	t.Run("Request Timeout", func(t *testing.T) {
 		timeout := 50 * time.Millisecond
 		tr := NewInMemTransport(WithRecvDelay(2 * timeout))
-		p := NewProtocol[uint64](
+		p := MustNewProtocol[uint64](t,
 			WithTransport(tr),
-			WithReqTimeout(timeout),
+			WithRespTimeout(timeout),
 		)
 
 		if err := p.Connect(); err != nil {
@@ -166,7 +174,7 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 	t.Run("Request With Canceled Context", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -193,7 +201,7 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 	t.Run("Request After Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -217,9 +225,9 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 	t.Run("Concurrent Requests", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](
+		p := MustNewProtocol[uint64](t,
 			WithTransport(tr),
-			WithReqTimeout(100*time.Millisecond),
+			WithRespTimeout(100*time.Millisecond),
 		)
 
 		if err := p.Connect(); err != nil {
@@ -266,7 +274,7 @@ func TestProtocol_SendRequest(t *testing.T) {
 func TestProtocol_SendNotification(t *testing.T) {
 	t.Run("Successful Notification", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -290,7 +298,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Notification With Canceled Context", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -317,7 +325,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Notification After Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -341,7 +349,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Concurrent Notifications", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := NewProtocol[uint64](WithTransport(tr))
+		p := MustNewProtocol[uint64](t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)

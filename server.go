@@ -8,43 +8,50 @@ import (
 
 const (
 	serverName    = "githuh.com/milosgajdos/go-mcp"
-	serverVersion = "v1.alpha"
+	serverVersion = "v0.unknown"
 )
 
-type ServerOptions struct {
+// ServerOptions configure server.
+type ServerOptions[T ID] struct {
 	EnforceCaps  bool
-	Transport    Transport
+	Protocol     *Protocol[T]
 	Info         Implementation
 	Capabilities ServerCapabilities
 }
 
-type ServerOption func(*ServerOptions)
+type ServerOption[T ID] func(*ServerOptions[T])
 
-func WithServerEnforceCaps() ServerOption {
-	return func(o *ServerOptions) {
+// WithServerEnforceCaps enforces client capability checks.
+func WithServerEnforceCaps[T ID]() ServerOption[T] {
+	return func(o *ServerOptions[T]) {
 		o.EnforceCaps = true
 	}
 }
 
-func WithServerTransport(tr Transport) ServerOption {
-	return func(o *ServerOptions) {
-		o.Transport = tr
+// WithServerProtocol configures server Protocol.
+func WithServerProtocol[T ID](p *Protocol[T]) ServerOption[T] {
+	return func(o *ServerOptions[T]) {
+		o.Protocol = p
 	}
 }
 
-func WithServerInfo(info Implementation) ServerOption {
-	return func(o *ServerOptions) {
+// WithServerInfo sets server implementation info.
+func WithServerInfo[T ID](info Implementation) ServerOption[T] {
+	return func(o *ServerOptions[T]) {
 		o.Info = info
 	}
 }
-func WithServerCapabilities(caps ServerCapabilities) ServerOption {
-	return func(o *ServerOptions) {
+
+// WithServerCapabilities sets server capabilities.
+func WithServerCapabilities[T ID](caps ServerCapabilities) ServerOption[T] {
+	return func(o *ServerOptions[T]) {
 		o.Capabilities = caps
 	}
 }
 
-func DefaultServerOptions() ServerOptions {
-	return ServerOptions{
+// DefaultServerOptions initializes default server options.
+func DefaultServerOptions[T ID]() ServerOptions[T] {
+	return ServerOptions[T]{
 		Info: Implementation{
 			Name:    serverName,
 			Version: serverVersion,
@@ -53,7 +60,7 @@ func DefaultServerOptions() ServerOptions {
 }
 
 type Server[T ID] struct {
-	options    ServerOptions
+	options    ServerOptions[T]
 	protocol   *Protocol[T]
 	caps       ServerCapabilities
 	clientInfo Implementation
@@ -62,30 +69,24 @@ type Server[T ID] struct {
 }
 
 // NewServer initializes a new MCP server.
-func NewServer[T ID](opts ...ServerOption) (*Server[T], error) {
-	options := DefaultServerOptions()
+func NewServer[T ID](opts ...ServerOption[T]) (*Server[T], error) {
+	options := DefaultServerOptions[T]()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	// NOTE: consider using In-memory transport as default
-	if options.Transport == nil {
-		return nil, ErrInvalidTransport
-	}
-
-	protocol := NewProtocol[T](WithTransport(options.Transport))
-	server := &Server[T]{
+	srv := &Server[T]{
 		options:  options,
-		protocol: protocol,
+		protocol: options.Protocol,
 		caps:     options.Capabilities,
 	}
 
 	// Register core handlers
-	protocol.RegisterRequestHandler(InitializeRequestMethod, server.handleInitialize)
-	protocol.RegisterRequestHandler(PingRequestMethod, server.handlePing)
-	protocol.RegisterNotificationHandler(InitializedNotificationMethod, server.handleInitialized)
+	srv.protocol.RegisterRequestHandler(PingRequestMethod, srv.handlePing)
+	srv.protocol.RegisterRequestHandler(InitializeRequestMethod, srv.handleInitialize)
+	srv.protocol.RegisterNotificationHandler(InitializedNotificationMethod, srv.handleInitialized)
 
-	return server, nil
+	return srv, nil
 }
 
 // Connect establishes server transport.
@@ -142,7 +143,7 @@ func (s *Server[T]) handleInitialize(_ context.Context, req *JSONRPCRequest[T]) 
 
 	params = initReq.Params
 	s.clientInfo = params.ClientInfo
-	s.clientCaps = params.Capabilities
+	s.clientCaps = copyClientCaps(params.Capabilities)
 
 	requestedVersion := LatestVersion
 	if IsSupportedVersion(params.ProtocolVersion) {
@@ -390,6 +391,10 @@ func (s *Server[T]) assertNotifCaps(method RequestMethod) error {
 		if len(s.caps.Logging) == 0 {
 			return fmt.Errorf("server does not support logging (required by %q)", method)
 		}
+	case PromptListChangedNotificationMethod:
+		if s.caps.Prompts == nil {
+			return fmt.Errorf("server does not support prompts (required by %q)", method)
+		}
 	case ResourceUpdatedNotificationMethod,
 		ResourceListChangedNotificationMethod:
 		if s.caps.Resources == nil {
@@ -399,13 +404,27 @@ func (s *Server[T]) assertNotifCaps(method RequestMethod) error {
 		if s.caps.Tools == nil {
 			return fmt.Errorf("server does not support tools (required by %q)", method)
 		}
-	case PromptListChangedNotificationMethod:
-		if s.caps.Prompts == nil {
-			return fmt.Errorf("server does not support prompts (required by %q)", method)
-		}
 	case CancelledNotificationMethod,
 		ProgressNotificationMethod:
 		return nil
 	}
 	return nil
+}
+
+func copyClientCaps(caps ClientCapabilities) ClientCapabilities {
+	experimental := make(ClientCapabilitiesExperimental, len(caps.Experimental))
+	for k, v := range caps.Experimental {
+		experimental[k] = v
+	}
+
+	sampling := make(ClientCapabilitiesSampling, len(caps.Sampling))
+	for k, v := range caps.Sampling {
+		sampling[k] = v
+	}
+
+	return ClientCapabilities{
+		Experimental: experimental,
+		Roots:        caps.Roots,
+		Sampling:     sampling,
+	}
 }

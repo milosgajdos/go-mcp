@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// DefaultReqTimeout sets max timeout for receiving a JSON RPC response.
-	DefaultReqTimeout = 60 * time.Second
+	// DefaultRespTimeout sets max timeout for receiving a JSON RPC response.
+	DefaultRespTimeout = 60 * time.Second
 	// DefaultHandleTimeout sets max timeout for handling a JSON RPC message.
 	DefaultHandleTimeout = 60 * time.Second
 	// DefaultWaitTimeout sets max wait timeout for a JSON RPC message to be consumed.
@@ -22,7 +22,7 @@ const (
 var (
 	// ErrInvalidTransport is returned when attempting to connect using invalid transport.
 	ErrInvalidTransport = errors.New("invalid transport")
-	// ErrPendingRequests is returned when attempting to connect while there are unhandled requests.
+	// ErrPendingRequests is returned when connecting while there are pending requests.
 	ErrPendingRequests = errors.New("pending requests")
 	// ErrResponseTimeout is returned when a request times out.
 	ErrResponseTimeout = errors.New("response timed out")
@@ -34,7 +34,7 @@ var (
 
 // Options are client options
 type Options struct {
-	ReqTimeout    time.Duration
+	RespTimeout   time.Duration
 	HandleTimeout time.Duration
 	WaitTimeout   time.Duration
 	Transport     Transport
@@ -45,17 +45,17 @@ type Option func(*Options)
 
 func DefaultOptions() Options {
 	return Options{
-		ReqTimeout:    DefaultReqTimeout,
+		RespTimeout:   DefaultRespTimeout,
 		HandleTimeout: DefaultHandleTimeout,
 		WaitTimeout:   DefaultWaitTimeout,
 		Transport:     NewInMemTransport(),
 	}
 }
 
-// WithReqTimeout sets request timeout option.
-func WithReqTimeout(timeout time.Duration) Option {
+// WithRespTimeout sets response timeout option.
+func WithRespTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		o.ReqTimeout = timeout
+		o.RespTimeout = timeout
 	}
 }
 
@@ -122,14 +122,15 @@ type Protocol[T ID] struct {
 }
 
 // NewProtocol creates a new instances of Protocol and returns it.
-func NewProtocol[T ID](opts ...Option) *Protocol[T] {
+func NewProtocol[T ID](opts ...Option) (*Protocol[T], error) {
 	options := DefaultOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &Protocol[T]{
+
+	return &Protocol[T]{
 		transport: options.Transport,
 		options:   options,
 		pending:   make(map[RequestID[T]]chan RespOrError[T]),
@@ -137,19 +138,7 @@ func NewProtocol[T ID](opts ...Option) *Protocol[T] {
 		notify:    make(map[RequestMethod]NotificationHandler[T]),
 		ctx:       ctx,
 		cancel:    cancel,
-	}
-
-	//Register default ping handler
-	p.RegisterRequestHandler(PingRequestMethod,
-		func(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
-			return &JSONRPCResponse[T]{
-				ID:      req.ID,
-				Version: JSONRPCVersion,
-				Result:  &PingResult{},
-			}, nil
-		})
-
-	return p
+	}, nil
 }
 
 // RegisterRequestHandler registers a handler for the given request method.
@@ -182,9 +171,8 @@ func (p *Protocol[T]) DeregisterNotificationHandler(method RequestMethod) {
 	delete(p.notify, method)
 }
 
-// Connect establishes the protocol on top of the given transport
+// Connect establishes protocol connection on top of the given transport
 // and starts receiving messages sent to it.
-// TODO: consider overriding Transport on connect.
 func (p *Protocol[T]) Connect() error {
 	if !p.running.CompareAndSwap(false, true) {
 		return ErrAlreadyConnected
@@ -262,7 +250,6 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 }
 
 // SendRequest sends a request and waits for response
-// TODO: consider overriding protocol timeouts.
 func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
 	// Returns the old value and increments
 	id := p.nextID.Add(1)
@@ -293,7 +280,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T]) (
 			return nil, result.Err
 		}
 		return result.Resp, nil
-	case <-time.After(p.options.ReqTimeout):
+	case <-time.After(p.options.RespTimeout):
 		return nil, &JSONRPCError[T]{
 			ID: req.ID,
 			Err: Error{
@@ -327,11 +314,10 @@ func (p *Protocol[T]) recvMsg() {
 			if err != nil {
 				// irrecoverable transport  errors
 				if errors.Is(err, ErrTransportClosed) ||
-					errors.Is(err, ErrTransportIO) ||
 					errors.Is(err, context.Canceled) {
 					// Transport closed or context cancelled - clean shutdown
 					if cErr := p.Close(context.Background()); cErr != nil {
-						log.Printf("shutting down: %v", cErr)
+						log.Printf("close protocol: %v", cErr)
 					}
 					return
 				}

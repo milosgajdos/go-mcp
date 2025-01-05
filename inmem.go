@@ -147,6 +147,8 @@ func (t *InMemTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-t.done:
+		return ErrTransportClosed
 	case t.outgoing <- msg:
 		return nil
 	}
@@ -173,6 +175,8 @@ func (t *InMemTransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-t.done:
+		return nil, ErrTransportClosed
 	case msg := <-t.incoming:
 		return msg, nil
 	}

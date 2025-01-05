@@ -20,15 +20,19 @@ func main() {
 
 	log.Printf("starting up...")
 
-	// Create SSE transport connecting to server on localhost:8080
 	transport, err := mcp.NewSSEClientTransport[uint64]("http://localhost:8090")
 	if err != nil {
 		log.Fatalf("failed to create transport: %v", err)
 	}
 
-	client, err := mcp.NewClient[uint64](
-		mcp.WithClientTransport(transport),
-		mcp.WithClientCapabilities(mcp.ClientCapabilities{
+	protocol, err := mcp.NewProtocol[uint64](mcp.WithTransport(transport))
+	if err != nil {
+		log.Fatalf("failed to create protocol: %v", err)
+	}
+
+	client, err := mcp.NewClient(
+		mcp.WithClientProtocol(protocol),
+		mcp.WithClientCapabilities[uint64](mcp.ClientCapabilities{
 			Roots: &mcp.ClientCapabilitiesRoots{},
 		}),
 	)

@@ -93,7 +93,7 @@ func (s *SSEServerTransport[T]) Start(context.Context) error {
 		defer s.wg.Done()
 		close(ready)
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("server error: %v\n", err)
+			log.Printf("server error: %v\n", err)
 		}
 	}()
 
@@ -181,7 +181,7 @@ func (s *SSEServerTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) er
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.done:
-		return nil
+		return ErrTransportClosed
 	case s.outgoing <- msg:
 		return nil
 	}
@@ -196,7 +196,6 @@ func (s *SSEServerTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.done:
-		// TODO consider if this is the right error
 		return nil, ErrTransportClosed
 	case msg := <-s.incoming:
 		return msg, nil
@@ -314,7 +313,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 					Version: JSONRPCVersion,
 					Err: Error{
 						Code:    JSONRPCConnectionClosed,
-						Message: "Connection closed",
+						Message: ErrTransportClosed.Error(),
 					},
 				}:
 				case <-c.done:
@@ -341,7 +340,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 					Version: JSONRPCVersion,
 					Err: Error{
 						Code:    JSONRPCConnectionClosed,
-						Message: "Connection closed",
+						Message: ErrTransportClosed.Error(),
 					},
 				}:
 				case <-c.done:
@@ -361,7 +360,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 						Version: JSONRPCVersion,
 						Err: Error{
 							Code:    JSONRPCConnectionClosed,
-							Message: fmt.Sprintf("parse event URL: %v", err),
+							Message: err.Error(),
 						},
 					}:
 					case <-c.done:
@@ -436,14 +435,16 @@ func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-c.done:
-		// TODO consider if this is the right error
 		return nil, ErrTransportClosed
 	case msg := <-c.incoming:
 		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {
 			errMsg, ok := msg.(*JSONRPCError[T])
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
-					return nil, ErrTransportIO
+					if err := c.Close(); err != nil {
+						log.Printf("close transport: %v", err)
+					}
+					return nil, ErrTransportClosed
 				}
 			}
 		}

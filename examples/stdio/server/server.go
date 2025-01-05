@@ -24,9 +24,14 @@ func main() {
 
 	transport := mcp.NewStdioTransport[uint64]()
 
-	server, err := mcp.NewServer[uint64](
-		mcp.WithServerTransport(transport),
-		mcp.WithServerCapabilities(mcp.ServerCapabilities{
+	protocol, err := mcp.NewProtocol[uint64](mcp.WithTransport(transport))
+	if err != nil {
+		log.Fatalf("failed to create protocol: %v", err)
+	}
+
+	server, err := mcp.NewServer(
+		mcp.WithServerProtocol(protocol),
+		mcp.WithServerCapabilities[uint64](mcp.ServerCapabilities{
 			Tools:     &mcp.ServerCapabilitiesTools{},
 			Resources: &mcp.ServerCapabilitiesResources{},
 			Prompts:   &mcp.ServerCapabilitiesPrompts{},
@@ -46,9 +51,9 @@ func main() {
 	log.Printf("server connected and ready - waiting for requests")
 
 	<-sigChan
-	log.Printf("shutting down...")
+	log.Printf("shutting down server...")
 	if err := server.Close(ctx); err != nil {
 		log.Printf("error closing server: %v", err)
 	}
-	log.Println("shut down")
+	log.Println("server shut down")
 }
