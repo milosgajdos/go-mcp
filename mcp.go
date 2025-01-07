@@ -579,13 +579,14 @@ func (j *JSONRPCResponse[T]) UnmarshalJSON(b []byte) error {
 type JSONRPCErrorCode int
 
 const (
-	JSONRPCParseError          JSONRPCErrorCode = -32700
+	JSONRPCConnectionClosed    JSONRPCErrorCode = -1
+	JSONRPCRequestTimeout      JSONRPCErrorCode = -2
 	JSONRPCInvalidRequestError JSONRPCErrorCode = -32600
 	JSONRPCMethodNotFoundError JSONRPCErrorCode = -32601
 	JSONRPCInvalidParamError   JSONRPCErrorCode = -32602
 	JSONRPCInternalError       JSONRPCErrorCode = -32603
-	JSONRPCConnectionClosed    JSONRPCErrorCode = -1
-	JSONRPCRequestTimeout      JSONRPCErrorCode = -2
+	JSONRPCParseError          JSONRPCErrorCode = -32700
+	JSONRPCCancelledError      JSONRPCErrorCode = -32701
 )
 
 type Error struct {
