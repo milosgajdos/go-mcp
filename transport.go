@@ -13,8 +13,10 @@ var (
 	ErrTransportClosed = errors.New("transport closed")
 	// ErrSendTimeout is returned when transport send times out
 	ErrSendTimeout = errors.New("send timeout")
-	//ErrRecvTimeout is returned when transporti receive times out
+	//ErrRecvTimeout is returned when transport receive times out
 	ErrRecvTimeout = errors.New("receive timeout")
+	// ErrInvalidMessage is returned when an invalid message is handled.
+	ErrInvalidMessage = errors.New("invalid message")
 )
 
 type TransportOptions struct {

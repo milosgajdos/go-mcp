@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -189,7 +189,7 @@ func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error)
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
 					if err := s.Close(); err != nil {
-						log.Printf("close transport: %v", err)
+						return nil, fmt.Errorf("transport close: %v", err)
 					}
 					return nil, ErrTransportClosed
 				}
@@ -225,7 +225,7 @@ func parseJSONRPCMessage[T ID](data []byte) (JSONRPCMessage, error) {
 	}
 
 	if err := json.Unmarshal(data, &base); err != nil {
-		return nil, fmt.Errorf("invalid JSON-RPC message: %w", err)
+		return nil, errors.Join(ErrInvalidMessage, err)
 	}
 
 	// Determine message type based on fields
@@ -261,5 +261,5 @@ func parseJSONRPCMessage[T ID](data []byte) (JSONRPCMessage, error) {
 		return &msg, nil
 	}
 
-	return nil, fmt.Errorf("invalid JSON-RPC message format")
+	return nil, ErrInvalidMessage
 }

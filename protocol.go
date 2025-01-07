@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	// DefaultRespTimeout sets max timeout for receiving a JSON RPC response.
+	// DefaultRespTimeout sets max timeout for receiving a JSON-RPC response.
 	DefaultRespTimeout = 60 * time.Second
-	// DefaultHandleTimeout sets max timeout for handling a JSON RPC message.
+	// DefaultHandleTimeout sets max timeout for handling a JSON-RPC message.
 	DefaultHandleTimeout = 60 * time.Second
-	// DefaultWaitTimeout sets max wait timeout for a JSON RPC message to be consumed.
+	// DefaultWaitTimeout sets max wait timeout for a JSON-RPC message to be consumed.
 	DefaultWaitTimeout = 300 * time.Millisecond
 )
 
@@ -26,8 +26,8 @@ var (
 	ErrPendingRequests = errors.New("pending requests")
 	// ErrResponseTimeout is returned when a request times out.
 	ErrResponseTimeout = errors.New("response timed out")
-	// ErrInvalidMessage is returned when an invalid message is handled.
-	ErrInvalidMessage = errors.New("invalid message")
+	// ErrWaitTimeout is returned when a response send times out.
+	ErrWaitTimeout = errors.New("wait timed out")
 	// ErrAlreadyConnected is returned when a connected protcol is attempted to connect again.
 	ErrAlreadyConnected = errors.New("already connected")
 )
@@ -80,10 +80,10 @@ func WithTransport(tr Transport) Option {
 	}
 }
 
-// RequestHandler for handling JSON RPC requests.
+// RequestHandler for handling JSON-RPC requests.
 type RequestHandler[T ID] func(context.Context, *JSONRPCRequest[T]) (*JSONRPCResponse[T], error)
 
-// NotificationHandler for handing JSON RPC notifications.
+// NotificationHandler for handing JSON-RPC notifications.
 type NotificationHandler[T ID] func(context.Context, *JSONRPCNotification[T]) error
 
 // Go doesn's provide sum types so this is our "union"
@@ -239,7 +239,6 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 		select {
 		case ch <- RespOrError[T]{Err: errResp}:
 		case <-time.After(p.options.WaitTimeout):
-			log.Printf("response send to %v request timed out", reqID)
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -312,7 +311,7 @@ func (p *Protocol[T]) recvMsg() {
 		default:
 			msg, err := p.transport.Receive(p.ctx)
 			if err != nil {
-				// irrecoverable transport  errors
+				// irrecoverable transport errors
 				if errors.Is(err, ErrTransportClosed) ||
 					errors.Is(err, context.Canceled) {
 					// Transport closed or context cancelled - clean shutdown
@@ -321,6 +320,7 @@ func (p *Protocol[T]) recvMsg() {
 					}
 					return
 				}
+				// TODO: maybe we should just shut down completely, too
 				// Other errors might be temporary - log and continue
 				log.Printf("receive error: %v", err)
 				continue
@@ -331,13 +331,7 @@ func (p *Protocol[T]) recvMsg() {
 }
 
 func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
-	// NOTE: this should never happen if underlying Transport
-	// is properly implemented, but let's not take that risk!
-	if msg == nil {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), p.options.HandleTimeout)
+	ctx, cancel := context.WithTimeout(p.ctx, p.options.HandleTimeout)
 	defer cancel()
 
 	switch msg.JSONRPCMessageType() {
@@ -384,7 +378,6 @@ func (p *Protocol[T]) handleError(ctx context.Context, errMsg *JSONRPCError[T]) 
 		select {
 		case ch <- RespOrError[T]{Err: errMsg}:
 		case <-time.After(p.options.WaitTimeout):
-			log.Printf("handle RPC handle error client wait timeout")
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -400,7 +393,6 @@ func (p *Protocol[T]) handleResponse(ctx context.Context, resp *JSONRPCResponse[
 		select {
 		case ch <- RespOrError[T]{Resp: resp}:
 		case <-time.After(p.options.WaitTimeout):
-			log.Printf("handle RPC handle response client wait timeout")
 		case <-p.ctx.Done():
 		case <-ctx.Done():
 		}
@@ -420,13 +412,6 @@ func (p *Protocol[T]) handleNotification(ctx context.Context, n *JSONRPCNotifica
 }
 
 func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T]) {
-	// NOTE: this should never happen if underlying Transport
-	// is properly implemented, but let's not take that risk!
-	if req.Request == nil {
-		log.Printf("Received empty JSON-RPC request with: %#v", req)
-		return
-	}
-
 	p.handlersMu.RLock()
 	handler, ok := p.handlers[req.Request.GetMethod()]
 	p.handlersMu.RUnlock()
@@ -441,7 +426,7 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T])
 			},
 		}
 		if err := p.transport.Send(ctx, errResp); err != nil {
-			log.Printf("send request error response: %v", err)
+			log.Printf("send missing handler error: %v", err)
 		}
 		return
 	}
@@ -461,7 +446,7 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T])
 			ctx = context.Background()
 		}
 		if err := p.transport.Send(ctx, errResp); err != nil {
-			log.Printf("send handler error response: %v", err)
+			log.Printf("send handler error: %v", err)
 		}
 		return
 	}
@@ -472,6 +457,6 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T])
 		Result:  resp.Result,
 	}
 	if err := p.transport.Send(ctx, out); err != nil {
-		log.Printf("send handler request response: %v", err)
+		log.Printf("send response error: %v", err)
 	}
 }
