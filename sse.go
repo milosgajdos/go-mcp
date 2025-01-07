@@ -442,7 +442,7 @@ func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
 					if err := c.Close(); err != nil {
-						log.Printf("close transport: %v", err)
+						return nil, fmt.Errorf("transport close: %v", err)
 					}
 					return nil, ErrTransportClosed
 				}
