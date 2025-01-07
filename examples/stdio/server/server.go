@@ -24,7 +24,7 @@ func main() {
 
 	transport := mcp.NewStdioTransport[uint64]()
 
-	protocol, err := mcp.NewProtocol[uint64](mcp.WithTransport(transport))
+	protocol, err := mcp.NewProtocol(mcp.WithTransport[uint64](transport))
 	if err != nil {
 		log.Fatalf("failed to create protocol: %v", err)
 	}

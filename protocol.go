@@ -33,18 +33,19 @@ var (
 )
 
 // Options are client options
-type Options struct {
+type Options[T ID] struct {
 	RespTimeout   time.Duration
 	HandleTimeout time.Duration
 	WaitTimeout   time.Duration
 	Transport     Transport
+	Progress      ProgressHandler[T]
 }
 
 // Option is functional graph option.
-type Option func(*Options)
+type Option[T ID] func(*Options[T])
 
-func DefaultOptions() Options {
-	return Options{
+func DefaultOptions[T ID]() Options[T] {
+	return Options[T]{
 		RespTimeout:   DefaultRespTimeout,
 		HandleTimeout: DefaultHandleTimeout,
 		WaitTimeout:   DefaultWaitTimeout,
@@ -53,38 +54,41 @@ func DefaultOptions() Options {
 }
 
 // WithRespTimeout sets response timeout option.
-func WithRespTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
+func WithRespTimeout[T ID](timeout time.Duration) Option[T] {
+	return func(o *Options[T]) {
 		o.RespTimeout = timeout
 	}
 }
 
 // WithHandleTimeout sets message handling timeout option.
-func WithHandleTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
+func WithHandleTimeout[T ID](timeout time.Duration) Option[T] {
+	return func(o *Options[T]) {
 		o.HandleTimeout = timeout
 	}
 }
 
 // WithWaitTimeout sets response stream timeout option.
-func WithWaitTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
+func WithWaitTimeout[T ID](timeout time.Duration) Option[T] {
+	return func(o *Options[T]) {
 		o.WaitTimeout = timeout
 	}
 }
 
 // WithTransport sets protocol transport.
-func WithTransport(tr Transport) Option {
-	return func(o *Options) {
+func WithTransport[T ID](tr Transport) Option[T] {
+	return func(o *Options[T]) {
 		o.Transport = tr
 	}
 }
 
 // RequestHandler for handling JSON-RPC requests.
-type RequestHandler[T ID] func(context.Context, *JSONRPCRequest[T]) (*JSONRPCResponse[T], error)
+type RequestHandler[T ID] func(ctx context.Context, n *JSONRPCRequest[T]) (*JSONRPCResponse[T], error)
 
-// NotificationHandler for handing JSON-RPC notifications.
-type NotificationHandler[T ID] func(context.Context, *JSONRPCNotification[T]) error
+// NotificationHandler for handling JSON-RPC notifications.
+type NotificationHandler[T ID] func(ctx context.Context, n *JSONRPCNotification[T]) error
+
+// ProgressHandler for handling progress notifications.
+type ProgressHandler[T ID] func(ctx context.Context, progress float64, total *int64) error
 
 // Go doesn's provide sum types so this is our "union"
 // JSONRPCResponse | JSONRPCError
@@ -98,12 +102,14 @@ type Protocol[T ID] struct {
 	transport Transport
 
 	// protocol options
-	options Options
+	options Options[T]
 
 	// For tracking pending requests
 	pendingMu sync.RWMutex
 	pending   map[RequestID[T]]chan RespOrError[T]
 	nextID    atomic.Uint64
+	// progress notification handlers
+	progress map[ProgressToken[T]]ProgressHandler[T]
 
 	// request handlers
 	handlersMu sync.RWMutex
@@ -122,23 +128,89 @@ type Protocol[T ID] struct {
 }
 
 // NewProtocol creates a new instances of Protocol and returns it.
-func NewProtocol[T ID](opts ...Option) (*Protocol[T], error) {
-	options := DefaultOptions()
+func NewProtocol[T ID](opts ...Option[T]) (*Protocol[T], error) {
+	options := DefaultOptions[T]()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Protocol[T]{
+	p := &Protocol[T]{
 		transport: options.Transport,
 		options:   options,
 		pending:   make(map[RequestID[T]]chan RespOrError[T]),
 		handlers:  make(map[RequestMethod]RequestHandler[T]),
 		notify:    make(map[RequestMethod]NotificationHandler[T]),
+		progress:  make(map[ProgressToken[T]]ProgressHandler[T]),
 		ctx:       ctx,
 		cancel:    cancel,
+	}
+
+	// Register default request handlers
+	p.RegisterRequestHandler(PingRequestMethod, p.handlePing)
+	// Register default notification handlers
+	p.RegisterNotificationHandler(CancelledNotificationMethod, p.handleCanceled)
+	p.RegisterNotificationHandler(ProgressNotificationMethod, p.handleProgress)
+
+	return p, nil
+}
+
+func (p *Protocol[T]) handlePing(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
+	return &JSONRPCResponse[T]{
+		ID:      req.ID,
+		Version: JSONRPCVersion,
+		Result:  &PingResult{},
 	}, nil
+}
+
+func (p *Protocol[T]) handleCanceled(ctx context.Context, n *JSONRPCNotification[T]) error {
+	cn, ok := n.Notification.(*CancelledNotification[T])
+	if !ok {
+		return fmt.Errorf("invalid notification, expected: %q", CancelledNotificationMethod)
+	}
+	reqID := cn.Params.RequestID
+	p.pendingMu.RLock()
+	defer p.pendingMu.RUnlock()
+	ch, ok := p.pending[reqID]
+	if !ok {
+		return nil
+	}
+
+	msg := "cancel notification received"
+	if cn.Params.Reason != nil {
+		msg = fmt.Sprintf("caneling request: %s", *cn.Params.Reason)
+	}
+	errResp := &JSONRPCError[T]{
+		ID:      reqID,
+		Version: JSONRPCVersion,
+		Err: Error{
+			Code:    JSONRPCCancelledError,
+			Message: msg,
+		},
+	}
+	select {
+	case ch <- RespOrError[T]{Err: errResp}:
+	case <-time.After(p.options.WaitTimeout):
+	case <-p.ctx.Done():
+	case <-ctx.Done():
+	}
+	delete(p.pending, reqID)
+	return nil
+}
+
+func (p *Protocol[T]) handleProgress(ctx context.Context, n *JSONRPCNotification[T]) error {
+	pn, ok := n.Notification.(*ProgressNotification[T])
+	if !ok {
+		return fmt.Errorf("invalid notification, expected: %q", ProgressNotificationMethod)
+	}
+	p.pendingMu.RLock()
+	handler, ok := p.progress[pn.Params.ProgressToken]
+	p.pendingMu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return handler(ctx, pn.Params.Progress, pn.Params.Total)
 }
 
 // RegisterRequestHandler registers a handler for the given request method.
@@ -249,7 +321,12 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 }
 
 // SendRequest sends a request and waits for response
-func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
+func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], opts ...Option[T]) (*JSONRPCResponse[T], error) {
+	options := DefaultOptions[T]()
+	for _, apply := range opts {
+		apply(&options)
+	}
+
 	// Returns the old value and increments
 	id := p.nextID.Add(1)
 	req.ID = RequestID[T]{Value: T(id)}
@@ -260,12 +337,16 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T]) (
 
 	p.pendingMu.Lock()
 	p.pending[req.ID] = respChan
+	if options.Progress != nil {
+		p.progress[ProgressToken[T]{Value: req.ID.Value}] = options.Progress
+	}
 	p.pendingMu.Unlock()
 
 	// Clean up on exit
 	defer func() {
 		p.pendingMu.Lock()
 		delete(p.pending, req.ID)
+		delete(p.progress, ProgressToken[T]{Value: req.ID.Value})
 		p.pendingMu.Unlock()
 	}()
 

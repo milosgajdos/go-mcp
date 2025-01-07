@@ -82,7 +82,6 @@ func NewServer[T ID](opts ...ServerOption[T]) (*Server[T], error) {
 	}
 
 	// Register core handlers
-	srv.protocol.RegisterRequestHandler(PingRequestMethod, srv.handlePing)
 	srv.protocol.RegisterRequestHandler(InitializeRequestMethod, srv.handleInitialize)
 	srv.protocol.RegisterNotificationHandler(InitializedNotificationMethod, srv.handleInitialized)
 
@@ -159,14 +158,6 @@ func (s *Server[T]) handleInitialize(_ context.Context, req *JSONRPCRequest[T]) 
 		},
 		ID:      req.ID,
 		Version: JSONRPCVersion,
-	}, nil
-}
-
-func (s *Server[T]) handlePing(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
-	return &JSONRPCResponse[T]{
-		ID:      req.ID,
-		Version: JSONRPCVersion,
-		Result:  &PingResult{},
 	}, nil
 }
 
