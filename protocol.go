@@ -81,6 +81,30 @@ func WithTransport[T ID](tr Transport) Option[T] {
 	}
 }
 
+type protocolID[T ID] struct {
+	nextID atomic.Uint64
+}
+
+func (p *protocolID[T]) Next() RequestID[T] {
+	id := p.nextID.Add(1)
+	return RequestID[T]{Value: convertID[T](id)}
+}
+
+// Helper function to convert uint64 to T
+func convertID[T ID](id uint64) T {
+	var zero T
+	switch any(zero).(type) {
+	case uint64:
+		return any(id).(T) // T is uint64
+	case string:
+		return any(fmt.Sprintf("%d", id)).(T) // T is string
+	default:
+		// NOTE: this should never happen as long as
+		// ID continues to be constrained by ~uint64 | ~string
+		panic("unsupported type")
+	}
+}
+
 // RequestHandler for handling JSON-RPC requests.
 type RequestHandler[T ID] func(ctx context.Context, n *JSONRPCRequest[T]) (*JSONRPCResponse[T], error)
 
@@ -107,7 +131,7 @@ type Protocol[T ID] struct {
 	// For tracking pending requests
 	pendingMu sync.RWMutex
 	pending   map[RequestID[T]]chan RespOrError[T]
-	nextID    atomic.Uint64
+	nextID    protocolID[T]
 	// progress notification handlers
 	progress map[ProgressToken[T]]ProgressHandler[T]
 
@@ -328,8 +352,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 	}
 
 	// Returns the old value and increments
-	id := p.nextID.Add(1)
-	req.ID = RequestID[T]{Value: T(id)}
+	req.ID = p.nextID.Next()
 	req.Version = JSONRPCVersion
 
 	// Create response channel and register request

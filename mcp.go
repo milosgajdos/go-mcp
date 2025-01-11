@@ -676,9 +676,10 @@ func (j *JSONRPCError[T]) Error() string {
 /// REQUESTS  ///
 /////////////////
 
-// ID is used as a generic constraint.
+// ID is used as a generic type constraint.
+// NOTE: this is a hack around the lack of sum types.
 type ID interface {
-	~uint64
+	~uint64 | ~string
 }
 
 // RequestID is a uniquely identifying ID for a request in JSON-RPC.
