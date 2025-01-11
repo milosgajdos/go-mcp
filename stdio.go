@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +12,7 @@ import (
 )
 
 // StdioTransport implements Transport interface using stdin/stdout
-type StdioTransport[T ID] struct {
+type StdioTransport struct {
 	options TransportOptions
 	reader  *bufio.Reader
 	writer  *bufio.Writer
@@ -31,19 +30,19 @@ type StdioTransport[T ID] struct {
 	state atomic.Int32
 }
 
-func NewStdioTransport[T ID](opts ...TransportOption) *StdioTransport[T] {
+func NewStdioTransport(opts ...TransportOption) *StdioTransport {
 	options := TransportOptions{}
 	for _, apply := range opts {
 		apply(&options)
 	}
-	return &StdioTransport[T]{
+	return &StdioTransport{
 		options: options,
 		reader:  bufio.NewReader(os.Stdin),
 		writer:  bufio.NewWriter(os.Stdout),
 	}
 }
 
-func (s *StdioTransport[T]) Start(ctx context.Context) error {
+func (s *StdioTransport) Start(ctx context.Context) error {
 	if !s.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
 		return ErrTransportStarted
 	}
@@ -78,7 +77,7 @@ func (s *StdioTransport[T]) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioTransport[T]) writeLoop(ctx context.Context) {
+func (s *StdioTransport) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -105,7 +104,7 @@ func (s *StdioTransport[T]) writeLoop(ctx context.Context) {
 }
 
 // readLoop continuously reads from stdin and puts messages on incoming channel
-func (s *StdioTransport[T]) readLoop(ctx context.Context) {
+func (s *StdioTransport) readLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -117,7 +116,7 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 			if err != nil {
 				if err == io.EOF || s.state.Load() == int32(stateStopped) {
 					select {
-					case s.incoming <- &JSONRPCError[T]{
+					case s.incoming <- &JSONRPCError{
 						Version: JSONRPCVersion,
 						Err: Error{
 							Code:    JSONRPCConnectionClosed,
@@ -136,9 +135,9 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 			// Remove trailing newline
 			line = line[:len(line)-1]
 
-			msg, err := parseJSONRPCMessage[T](line)
+			msg, err := parseJSONRPCMessage(line)
 			if err != nil {
-				msg = &JSONRPCError[T]{
+				msg = &JSONRPCError{
 					Version: JSONRPCVersion,
 					Err: Error{
 						Code:    JSONRPCParseError,
@@ -158,7 +157,7 @@ func (s *StdioTransport[T]) readLoop(ctx context.Context) {
 	}
 }
 
-func (s *StdioTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+func (s *StdioTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	if s.state.Load() != int32(stateRunning) {
 		return ErrTransportClosed
 	}
@@ -173,7 +172,7 @@ func (s *StdioTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error 
 	}
 }
 
-func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+func (s *StdioTransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
 	if s.state.Load() != int32(stateRunning) {
 		return nil, ErrTransportClosed
 	}
@@ -185,7 +184,7 @@ func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error)
 		return nil, ErrTransportClosed
 	case msg := <-s.incoming:
 		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {
-			errMsg, ok := msg.(*JSONRPCError[T])
+			errMsg, ok := msg.(*JSONRPCError)
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
 					if err := s.Close(); err != nil {
@@ -199,7 +198,7 @@ func (s *StdioTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error)
 	}
 }
 
-func (s *StdioTransport[T]) Close() error {
+func (s *StdioTransport) Close() error {
 	if !s.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
 		return nil
 	}
@@ -212,54 +211,4 @@ func (s *StdioTransport[T]) Close() error {
 	close(s.outgoing)
 
 	return s.writer.Flush()
-}
-
-// parseJSONRPCMessage attempts to parse a JSON-RPC message from raw bytes
-func parseJSONRPCMessage[T ID](data []byte) (JSONRPCMessage, error) {
-	// First unmarshal to get the basic structure
-	var base struct {
-		Version string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  json.RawMessage `json:"method"`
-		Error   json.RawMessage `json:"error"`
-	}
-
-	if err := json.Unmarshal(data, &base); err != nil {
-		return nil, errors.Join(ErrInvalidMessage, err)
-	}
-
-	// Determine message type based on fields
-	if len(base.ID) > 0 {
-		if len(base.Error) > 0 {
-			var msg JSONRPCError[T]
-			if err := json.Unmarshal(data, &msg); err != nil {
-				return nil, fmt.Errorf("invalid JSON-RPC error: %w", err)
-			}
-			return &msg, nil
-		}
-
-		if len(base.Method) > 0 {
-			var msg JSONRPCRequest[T]
-			if err := json.Unmarshal(data, &msg); err != nil {
-				return nil, fmt.Errorf("invalid JSON-RPC request: %w", err)
-			}
-			return &msg, nil
-		}
-
-		var msg JSONRPCResponse[T]
-		if err := json.Unmarshal(data, &msg); err != nil {
-			return nil, fmt.Errorf("invalid JSON-RPC response: %w", err)
-		}
-		return &msg, nil
-	}
-
-	if len(base.Method) > 0 {
-		var msg JSONRPCNotification[T]
-		if err := json.Unmarshal(data, &msg); err != nil {
-			return nil, fmt.Errorf("invalid JSON-RPC notification: %w", err)
-		}
-		return &msg, nil
-	}
-
-	return nil, ErrInvalidMessage
 }

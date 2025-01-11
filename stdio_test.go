@@ -10,15 +10,15 @@ import (
 	"testing"
 )
 
-func StdioTransportMustStart[T ID](ctx context.Context, t *testing.T) *StdioTransport[T] {
-	tr := NewStdioTransport[T]()
+func StdioTransportMustStart(ctx context.Context, t *testing.T) *StdioTransport {
+	tr := NewStdioTransport()
 	if err := tr.Start(ctx); err != nil {
 		t.Errorf("Start() error = %v, want %v", err, context.Canceled)
 	}
 	return tr
 }
 
-func StdioTransportMustClose[T ID](_ context.Context, t *testing.T, tr *StdioTransport[T]) {
+func StdioTransportMustClose(_ context.Context, t *testing.T, tr *StdioTransport) {
 	if err := tr.Close(); err != nil {
 		t.Fatalf("failed closing transport: %v", err)
 	}
@@ -26,7 +26,7 @@ func StdioTransportMustClose[T ID](_ context.Context, t *testing.T, tr *StdioTra
 
 func TestStdioTransport_Start(t *testing.T) {
 	t.Run("successful start", func(t *testing.T) {
-		tr := NewStdioTransport[uint64]()
+		tr := NewStdioTransport()
 		if err := tr.Start(context.Background()); err != nil {
 			t.Errorf("Start() error = %v", err)
 		}
@@ -34,7 +34,7 @@ func TestStdioTransport_Start(t *testing.T) {
 	})
 
 	t.Run("double start", func(t *testing.T) {
-		tr := NewStdioTransport[uint64]()
+		tr := NewStdioTransport()
 		if err := tr.Start(context.Background()); err != nil {
 			t.Fatalf("First Start() error = %v", err)
 		}
@@ -57,14 +57,15 @@ func TestStdioTransport_Send(t *testing.T) {
 
 		// 2) Start transport
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 
-		msg := &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
+		msg := &JSONRPCRequest{
+			Request: &PingRequest{
+				Request: Request{
 					Method: PingRequestMethod,
 				},
 			},
+			ID:      NewRequestID(uint64(1)),
 			Version: JSONRPCVersion,
 		}
 		if err := tr.Send(context.Background(), msg); err != nil {
@@ -91,7 +92,7 @@ func TestStdioTransport_Send(t *testing.T) {
 		}
 
 		// 8) Verify JSON
-		var received JSONRPCRequest[uint64]
+		var received JSONRPCRequest
 		if err := json.Unmarshal(buf.Bytes(), &received); err != nil {
 			t.Fatalf("Failed to unmarshal sent message: %v", err)
 		}
@@ -101,7 +102,7 @@ func TestStdioTransport_Send(t *testing.T) {
 	})
 
 	t.Run("send before start", func(t *testing.T) {
-		tr := NewStdioTransport[uint64]()
+		tr := NewStdioTransport()
 		if err := tr.Send(context.Background(), nil); !errors.Is(err, ErrTransportClosed) {
 			t.Errorf("Send() error = %v, want '%v'", err, ErrTransportClosed)
 		}
@@ -109,7 +110,7 @@ func TestStdioTransport_Send(t *testing.T) {
 
 	t.Run("send after close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 		StdioTransportMustClose(context.Background(), t, tr)
 
 		err := tr.Send(context.Background(), nil)
@@ -130,15 +131,16 @@ func TestStdioTransport_Receive(t *testing.T) {
 		os.Stdin = r
 
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 
 		// Write a test message to the pipe
-		msg := &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
+		msg := &JSONRPCRequest{
+			Request: &PingRequest{
+				Request: Request{
 					Method: PingRequestMethod,
 				},
 			},
+			ID:      NewRequestID(uint64(1)),
 			Version: JSONRPCVersion,
 		}
 
@@ -163,9 +165,9 @@ func TestStdioTransport_Receive(t *testing.T) {
 		os.Stdin = oldStdin
 
 		// Verify received message
-		req, ok := received.(*JSONRPCRequest[uint64])
+		req, ok := received.(*JSONRPCRequest)
 		if !ok {
-			t.Errorf("Received message type = %T, want *JSONRPCRequest[uint64]", received)
+			t.Errorf("Received message type = %T, want *JSONRPCRequest", received)
 		}
 		if req.Version != JSONRPCVersion {
 			t.Errorf("Received message version = %v, want %v", req.Version, JSONRPCVersion)
@@ -175,7 +177,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 	})
 
 	t.Run("receive before start", func(t *testing.T) {
-		tr := NewStdioTransport[uint64]()
+		tr := NewStdioTransport()
 		if _, err := tr.Receive(context.Background()); !errors.Is(err, ErrTransportClosed) {
 			t.Errorf("Receive() error = %v, want '%v'", err, ErrTransportClosed)
 		}
@@ -183,7 +185,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 
 	t.Run("receive after close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
@@ -196,7 +198,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 
 func TestStdioTransport_Close(t *testing.T) {
 	t.Run("close before start", func(t *testing.T) {
-		tr := NewStdioTransport[uint64]()
+		tr := NewStdioTransport()
 		if err := tr.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
@@ -204,7 +206,7 @@ func TestStdioTransport_Close(t *testing.T) {
 
 	t.Run("successful close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
@@ -212,7 +214,7 @@ func TestStdioTransport_Close(t *testing.T) {
 
 	t.Run("multiple close", func(t *testing.T) {
 		ctx := context.Background()
-		tr := StdioTransportMustStart[uint64](ctx, t)
+		tr := StdioTransportMustStart(ctx, t)
 		if err := tr.Close(); err != nil {
 			t.Fatalf("First Close() error = %v", err)
 		}

@@ -22,19 +22,19 @@ func main() {
 
 	log.Printf("starting up...")
 
-	transport, err := mcp.NewSSEServerTransport[uint64](":8090")
+	transport, err := mcp.NewSSEServerTransport(":8090")
 	if err != nil {
 		log.Fatalf("failed to create transport: %v", err)
 	}
 
-	protocol, err := mcp.NewProtocol(mcp.WithTransport[uint64](transport))
+	protocol, err := mcp.NewProtocol(mcp.WithTransport(transport))
 	if err != nil {
 		log.Fatalf("failed to create protocol: %v", err)
 	}
 
 	server, err := mcp.NewServer(
 		mcp.WithServerProtocol(protocol),
-		mcp.WithServerCapabilities[uint64](mcp.ServerCapabilities{
+		mcp.WithServerCapabilities(mcp.ServerCapabilities{
 			Tools:     &mcp.ServerCapabilitiesTools{},
 			Resources: &mcp.ServerCapabilitiesResources{},
 			Prompts:   &mcp.ServerCapabilitiesPrompts{},

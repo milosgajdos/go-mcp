@@ -12,46 +12,46 @@ const (
 )
 
 // ServerOptions configure server.
-type ServerOptions[T ID] struct {
+type ServerOptions struct {
 	EnforceCaps  bool
-	Protocol     *Protocol[T]
+	Protocol     *Protocol
 	Info         Implementation
 	Capabilities ServerCapabilities
 }
 
-type ServerOption[T ID] func(*ServerOptions[T])
+type ServerOption func(*ServerOptions)
 
 // WithServerEnforceCaps enforces client capability checks.
-func WithServerEnforceCaps[T ID]() ServerOption[T] {
-	return func(o *ServerOptions[T]) {
+func WithServerEnforceCaps() ServerOption {
+	return func(o *ServerOptions) {
 		o.EnforceCaps = true
 	}
 }
 
 // WithServerProtocol configures server Protocol.
-func WithServerProtocol[T ID](p *Protocol[T]) ServerOption[T] {
-	return func(o *ServerOptions[T]) {
+func WithServerProtocol(p *Protocol) ServerOption {
+	return func(o *ServerOptions) {
 		o.Protocol = p
 	}
 }
 
 // WithServerInfo sets server implementation info.
-func WithServerInfo[T ID](info Implementation) ServerOption[T] {
-	return func(o *ServerOptions[T]) {
+func WithServerInfo(info Implementation) ServerOption {
+	return func(o *ServerOptions) {
 		o.Info = info
 	}
 }
 
 // WithServerCapabilities sets server capabilities.
-func WithServerCapabilities[T ID](caps ServerCapabilities) ServerOption[T] {
-	return func(o *ServerOptions[T]) {
+func WithServerCapabilities(caps ServerCapabilities) ServerOption {
+	return func(o *ServerOptions) {
 		o.Capabilities = caps
 	}
 }
 
 // DefaultServerOptions initializes default server options.
-func DefaultServerOptions[T ID]() ServerOptions[T] {
-	return ServerOptions[T]{
+func DefaultServerOptions() ServerOptions {
+	return ServerOptions{
 		Info: Implementation{
 			Name:    serverName,
 			Version: serverVersion,
@@ -59,9 +59,9 @@ func DefaultServerOptions[T ID]() ServerOptions[T] {
 	}
 }
 
-type Server[T ID] struct {
-	options    ServerOptions[T]
-	protocol   *Protocol[T]
+type Server struct {
+	options    ServerOptions
+	protocol   *Protocol
 	caps       ServerCapabilities
 	clientInfo Implementation
 	clientCaps ClientCapabilities
@@ -69,13 +69,13 @@ type Server[T ID] struct {
 }
 
 // NewServer initializes a new MCP server.
-func NewServer[T ID](opts ...ServerOption[T]) (*Server[T], error) {
-	options := DefaultServerOptions[T]()
+func NewServer(opts ...ServerOption) (*Server, error) {
+	options := DefaultServerOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	srv := &Server[T]{
+	srv := &Server{
 		options:  options,
 		protocol: options.Protocol,
 		caps:     options.Capabilities,
@@ -89,7 +89,7 @@ func NewServer[T ID](opts ...ServerOption[T]) (*Server[T], error) {
 }
 
 // Connect establishes server transport.
-func (s *Server[T]) Connect(context.Context) error {
+func (s *Server) Connect(context.Context) error {
 	if !s.connected.CompareAndSwap(false, true) {
 		return ErrAlreadyConnected
 	}
@@ -97,22 +97,22 @@ func (s *Server[T]) Connect(context.Context) error {
 }
 
 // Close terminates the server.
-func (s *Server[T]) Close(ctx context.Context) error {
+func (s *Server) Close(ctx context.Context) error {
 	return s.protocol.Close(ctx)
 }
 
 // GetClientCapabilities returns client capabilities.
-func (s *Server[T]) GetClientCapabilities() ClientCapabilities {
+func (s *Server) GetClientCapabilities() ClientCapabilities {
 	return s.clientCaps
 }
 
 // GetClientInfo returns client info.
-func (s *Server[T]) GetClientInfo() Implementation {
+func (s *Server) GetClientInfo() Implementation {
 	return s.clientInfo
 }
 
 // HandleRequest registers a requset handler for the given request method.
-func (s *Server[T]) HandleRequest(method RequestMethod, handler RequestHandler[T]) error {
+func (s *Server) HandleRequest(method RequestMethod, handler RequestHandler) error {
 	if err := s.assertReqCaps(method); err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (s *Server[T]) HandleRequest(method RequestMethod, handler RequestHandler[T
 }
 
 // HandleNotification registers a notification handler for the given notification method.
-func (s *Server[T]) HandleNotification(method RequestMethod, handler NotificationHandler[T]) error {
+func (s *Server) HandleNotification(method RequestMethod, handler NotificationHandler) error {
 	if err := s.assertNotifCaps(method); err != nil {
 		return err
 	}
@@ -129,13 +129,13 @@ func (s *Server[T]) HandleNotification(method RequestMethod, handler Notificatio
 	return nil
 }
 
-func (s *Server[T]) handleInitialize(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
+func (s *Server) handleInitialize(_ context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
 	var params InitializeRequestParams
 	if req.Request == nil {
 		return nil, fmt.Errorf("empty request")
 	}
 
-	initReq, ok := req.Request.(*InitializeRequest[T])
+	initReq, ok := req.Request.(*InitializeRequest)
 	if !ok {
 		return nil, fmt.Errorf("invalid initialize request type: %T", req.Request)
 	}
@@ -149,7 +149,7 @@ func (s *Server[T]) handleInitialize(_ context.Context, req *JSONRPCRequest[T]) 
 		requestedVersion = params.ProtocolVersion
 	}
 
-	return &JSONRPCResponse[T]{
+	return &JSONRPCResponse{
 		Result: &InitializeResult{
 			Result:          Result{},
 			ProtocolVersion: requestedVersion,
@@ -161,19 +161,19 @@ func (s *Server[T]) handleInitialize(_ context.Context, req *JSONRPCRequest[T]) 
 	}, nil
 }
 
-func (s *Server[T]) handleInitialized(context.Context, *JSONRPCNotification[T]) error {
+func (s *Server) handleInitialized(context.Context, *JSONRPCNotification) error {
 	// Server is now fully initialized
 	// we could trigger any post-initialization logic here
 	return nil
 }
 
 // SendLoggingMessage sends a logging message to the client
-func (s *Server[T]) SendLoggingMessage(ctx context.Context, params LoggingMessageNotificationParams) error {
+func (s *Server) SendLoggingMessage(ctx context.Context, params LoggingMessageNotificationParams) error {
 	if err := s.assertNotifCaps(LoggingMessageNotificationMethod); err != nil {
 		return err
 	}
 
-	notif := &JSONRPCNotification[T]{
+	notif := &JSONRPCNotification{
 		Notification: &LoggingMessageNotification{
 			Notification: Notification{
 				Method: LoggingMessageNotificationMethod,
@@ -187,12 +187,12 @@ func (s *Server[T]) SendLoggingMessage(ctx context.Context, params LoggingMessag
 }
 
 // SendResourceUpdated notifies client about resource updates
-func (s *Server[T]) SendResourceUpdated(ctx context.Context, params ResourceUpdatedNotificationParams) error {
+func (s *Server) SendResourceUpdated(ctx context.Context, params ResourceUpdatedNotificationParams) error {
 	if err := s.assertNotifCaps(ResourceUpdatedNotificationMethod); err != nil {
 		return err
 	}
 
-	notif := &JSONRPCNotification[T]{
+	notif := &JSONRPCNotification{
 		Notification: &ResourceUpdatedNotification{
 			Notification: Notification{
 				Method: ResourceUpdatedNotificationMethod,
@@ -206,12 +206,12 @@ func (s *Server[T]) SendResourceUpdated(ctx context.Context, params ResourceUpda
 }
 
 // SendResourceListChanged notifies client about resource list changes
-func (s *Server[T]) SendResourceListChanged(ctx context.Context) error {
+func (s *Server) SendResourceListChanged(ctx context.Context) error {
 	if err := s.assertNotifCaps(ResourceListChangedNotificationMethod); err != nil {
 		return err
 	}
 
-	notif := &JSONRPCNotification[T]{
+	notif := &JSONRPCNotification{
 		Notification: &ResourceListChangedNotification{
 			Notification: Notification{
 				Method: ResourceListChangedNotificationMethod,
@@ -224,12 +224,12 @@ func (s *Server[T]) SendResourceListChanged(ctx context.Context) error {
 }
 
 // SendToolListChanged notifies client about tool list changes
-func (s *Server[T]) SendToolListChanged(ctx context.Context) error {
+func (s *Server) SendToolListChanged(ctx context.Context) error {
 	if err := s.assertNotifCaps(ToolListChangedNotificationMethod); err != nil {
 		return err
 	}
 
-	notif := &JSONRPCNotification[T]{
+	notif := &JSONRPCNotification{
 		Notification: &ToolListChangedNotification{
 			Notification: Notification{
 				Method: ToolListChangedNotificationMethod,
@@ -242,12 +242,12 @@ func (s *Server[T]) SendToolListChanged(ctx context.Context) error {
 }
 
 // SendPromptListChanged notifies client about prompt list changes
-func (s *Server[T]) SendPromptListChanged(ctx context.Context) error {
+func (s *Server) SendPromptListChanged(ctx context.Context) error {
 	if err := s.assertNotifCaps(PromptListChangedNotificationMethod); err != nil {
 		return err
 	}
 
-	notif := &JSONRPCNotification[T]{
+	notif := &JSONRPCNotification{
 		Notification: &PromptListChangedNotification{
 			Notification: Notification{
 				Method: PromptListChangedNotificationMethod,
@@ -260,16 +260,17 @@ func (s *Server[T]) SendPromptListChanged(ctx context.Context) error {
 }
 
 // Ping sends a ping request.
-func (s *Server[T]) Ping(ctx context.Context) error {
+func (s *Server) Ping(ctx context.Context) error {
 	if err := s.assertClientCaps(PingRequestMethod); err != nil {
 		return err
 	}
-	req := &JSONRPCRequest[T]{
-		Request: &PingRequest[T]{
-			Request: Request[T]{
+	req := &JSONRPCRequest{
+		Request: &PingRequest{
+			Request: Request{
 				Method: PingRequestMethod,
 			},
 		},
+		ID:      NewRequestID(uint64(1)),
 		Version: JSONRPCVersion,
 	}
 
@@ -278,17 +279,18 @@ func (s *Server[T]) Ping(ctx context.Context) error {
 }
 
 // CreateMessage sends a create message request.
-func (s *Server[T]) CreateMessage(ctx context.Context, params CreateMessageRequestParams) (*CreateMessageResult, error) {
+func (s *Server) CreateMessage(ctx context.Context, params CreateMessageRequestParams) (*CreateMessageResult, error) {
 	if err := s.assertClientCaps(CreateMessageRequestMethod); err != nil {
 		return nil, err
 	}
-	req := &JSONRPCRequest[T]{
-		Request: &CreateMessageRequest[T]{
-			Request: Request[T]{
+	req := &JSONRPCRequest{
+		Request: &CreateMessageRequest{
+			Request: Request{
 				Method: CreateMessageRequestMethod,
 			},
 			Params: params,
 		},
+		ID:      NewRequestID(uint64(1)),
 		Version: JSONRPCVersion,
 	}
 
@@ -305,16 +307,17 @@ func (s *Server[T]) CreateMessage(ctx context.Context, params CreateMessageReque
 }
 
 // ListRoots sends a list roots request.
-func (s *Server[T]) ListRoots(ctx context.Context) (*ListRootsResult, error) {
+func (s *Server) ListRoots(ctx context.Context) (*ListRootsResult, error) {
 	if err := s.assertClientCaps(ListRootsRequestMethod); err != nil {
 		return nil, err
 	}
-	req := &JSONRPCRequest[T]{
-		Request: &ListRootsRequest[T]{
-			Request: Request[T]{
+	req := &JSONRPCRequest{
+		Request: &ListRootsRequest{
+			Request: Request{
 				Method: ListRootsRequestMethod,
 			},
 		},
+		ID:      NewRequestID(uint64(1)),
 		Version: JSONRPCVersion,
 	}
 
@@ -330,7 +333,7 @@ func (s *Server[T]) ListRoots(ctx context.Context) (*ListRootsResult, error) {
 	return nil, ErrInvalidResponse
 }
 
-func (s *Server[T]) assertClientCaps(method RequestMethod) error {
+func (s *Server) assertClientCaps(method RequestMethod) error {
 	if !s.options.EnforceCaps {
 		return nil
 	}
@@ -351,7 +354,7 @@ func (s *Server[T]) assertClientCaps(method RequestMethod) error {
 	return nil
 }
 
-func (s *Server[T]) assertReqCaps(method RequestMethod) error {
+func (s *Server) assertReqCaps(method RequestMethod) error {
 	switch method {
 	case SetLevelRequestMethod:
 		if len(s.caps.Logging) == 0 {
@@ -384,7 +387,7 @@ func (s *Server[T]) assertReqCaps(method RequestMethod) error {
 	return nil
 }
 
-func (s *Server[T]) assertNotifCaps(method RequestMethod) error {
+func (s *Server) assertNotifCaps(method RequestMethod) error {
 	switch method {
 	case LoggingMessageNotificationMethod:
 		if len(s.caps.Logging) == 0 {

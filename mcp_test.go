@@ -9,30 +9,30 @@ import (
 func TestRequestMessages(t *testing.T) {
 	tests := []struct {
 		name    string
-		request JSONRPCRequest[uint64]
+		request JSONRPCRequest
 	}{
 		{
 			name: "PingRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &PingRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
 						Method: PingRequestMethod,
 					},
-					Params: &PingRequestParams[uint64]{
+					Params: &PingRequestParams{
 						AdditionalProperties: map[string]any{
 							"foo": "bar",
 						},
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "InitializeRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &InitializeRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &InitializeRequest{
+					Request: Request{
 						Method: InitializeRequestMethod,
 					},
 					Params: InitializeRequestParams{
@@ -42,15 +42,15 @@ func TestRequestMessages(t *testing.T) {
 						},
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CompleteRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &CompleteRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &CompleteRequest{
+					Request: Request{
 						Method: CompleteRequestMethod,
 					},
 					Params: CompleteRequestParams{
@@ -62,144 +62,144 @@ func TestRequestMessages(t *testing.T) {
 						},
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "SetLevelRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &SetLevelRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &SetLevelRequest{
+					Request: Request{
 						Method: SetLevelRequestMethod,
 					},
 					Params: SetLevelRequestParams{
 						Level: LoggingLevelEmergency,
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "GetPromptRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &GetPromptRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &GetPromptRequest{
+					Request: Request{
 						Method: GetPromptRequestMethod,
 					},
 					Params: GetPromptRequestParams{
 						Name: "foo",
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListPromptsRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &ListPromptsRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &ListPromptsRequest{
+					Request: Request{
 						Method: ListPromptsRequestMethod,
 					},
 					Params: &PaginatedRequestParams{
 						Cursor: &[]Cursor{"test-cursor"}[0],
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListResourcesRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &ListResourcesRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &ListResourcesRequest{
+					Request: Request{
 						Method: ListResourcesRequestMethod,
 					},
 					Params: &PaginatedRequestParams{
 						Cursor: &[]Cursor{"test-cursor"}[0],
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListResourceTemplatesRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &ListResourceTemplatesRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &ListResourceTemplatesRequest{
+					Request: Request{
 						Method: ListResourceTemplatesRequestMethod,
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListRootsRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &ListRootsRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &ListRootsRequest{
+					Request: Request{
 						Method: ListRootsRequestMethod,
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ReadResourceRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &ReadResourceRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &ReadResourceRequest{
+					Request: Request{
 						Method: ReadResourceRequestMethod,
 					},
 					Params: &ReadResourceRequestParams{
 						URI: "foo://bar",
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "SubscribeRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &SubscribeRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &SubscribeRequest{
+					Request: Request{
 						Method: SubscribeRequestMethod,
 					},
 					Params: SubscribeRequestParams{
 						URI: "foo://bar",
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "UnsubscribeRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &UnsubscribeRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &UnsubscribeRequest{
+					Request: Request{
 						Method: SubscribeRequestMethod,
 					},
 					Params: UnsubscribeRequestParams{
 						URI: "foo://bar",
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CallToolRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &CallToolRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &CallToolRequest{
+					Request: Request{
 						Method: CallToolRequestMethod,
 					},
 					Params: CallToolRequestParams{
@@ -209,15 +209,15 @@ func TestRequestMessages(t *testing.T) {
 						},
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CreateMessageRequest",
-			request: JSONRPCRequest[uint64]{
-				Request: &CreateMessageRequest[uint64]{
-					Request: Request[uint64]{
+			request: JSONRPCRequest{
+				Request: &CreateMessageRequest{
+					Request: Request{
 						Method: CreateMessageRequestMethod,
 					},
 					Params: CreateMessageRequestParams{
@@ -243,7 +243,7 @@ func TestRequestMessages(t *testing.T) {
 						MaxTokens: 100,
 					},
 				},
-				ID:      RequestID[uint64]{Value: 2},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
@@ -254,19 +254,19 @@ func TestRequestMessages(t *testing.T) {
 			// Test marshaling
 			data, err := json.Marshal(tt.request)
 			if err != nil {
-				t.Errorf("Marshal %s failed: %v", tt.name, err)
+				t.Fatalf("Marshal %s failed: %v", tt.name, err)
 			}
 
 			// Test unmarshaling
-			var decoded JSONRPCRequest[uint64]
+			var decoded JSONRPCRequest
 			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Errorf("Unmarshal %s failed: %v", tt.name, err)
+				t.Fatalf("Unmarshal %s failed: %v", tt.name, err)
 			}
 
 			// Test that the decoded request matches the original
 			reencoded, err := json.Marshal(decoded)
 			if err != nil {
-				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
+				t.Fatalf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
 			if string(data) != string(reencoded) {
@@ -280,20 +280,18 @@ func TestRequestMessages(t *testing.T) {
 func TestNotificationMessages(t *testing.T) {
 	tests := []struct {
 		name         string
-		notification JSONRPCNotification[uint64]
+		notification JSONRPCNotification
 	}{
 		{
 			name: "ProgressNotification",
-			notification: JSONRPCNotification[uint64]{
-				Notification: &ProgressNotification[uint64]{
+			notification: JSONRPCNotification{
+				Notification: &ProgressNotification{
 					Notification: Notification{
 						Method: ProgressNotificationMethod,
 					},
-					Params: ProgressNotificationParams[uint64]{
-						Progress: 0.6,
-						ProgressToken: ProgressToken[uint64]{
-							Value: 100,
-						},
+					Params: ProgressNotificationParams{
+						Progress:      0.6,
+						ProgressToken: ProgressToken{Value: uint64(100)},
 					},
 				},
 				Version: JSONRPCVersion,
@@ -301,7 +299,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "InitializedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &InitializedNotification{
 					Notification: Notification{
 						Method: InitializedNotificationMethod,
@@ -317,7 +315,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "RootsListChangedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &RootsListChangedNotification{
 					Notification: Notification{
 						Method: RootsListChangedNotificationMethod,
@@ -333,7 +331,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "LoggingMessageNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &LoggingMessageNotification{
 					Notification: Notification{
 						Method: LoggingMessageNotificationMethod,
@@ -348,7 +346,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "ResourceUpdatedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &ResourceUpdatedNotification{
 					Notification: Notification{
 						Method: ResourceUpdatedNotificationMethod,
@@ -362,7 +360,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "ResourceListChangedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &ResourceListChangedNotification{
 					Notification: Notification{
 						Method: ResourceListChangedNotificationMethod,
@@ -378,7 +376,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "ToolListChangedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &ToolListChangedNotification{
 					Notification: Notification{
 						Method: ToolListChangedNotificationMethod,
@@ -394,7 +392,7 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "PromptListChangedNotification",
-			notification: JSONRPCNotification[uint64]{
+			notification: JSONRPCNotification{
 				Notification: &PromptListChangedNotification{
 					Notification: Notification{
 						Method: PromptListChangedNotificationMethod,
@@ -410,13 +408,14 @@ func TestNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "CancelledNotification",
-			notification: JSONRPCNotification[uint64]{
-				Notification: &CancelledNotification[uint64]{
+			notification: JSONRPCNotification{
+				Notification: &CancelledNotification{
 					Notification: Notification{
 						Method: CancelledNotificationMethod,
 					},
-					Params: CancelledNotificationParams[uint64]{
-						Reason: &[]string{"some reason"}[0],
+					Params: CancelledNotificationParams{
+						Reason:    &[]string{"some reason"}[0],
+						RequestID: RequestID{Value: uint64(3)},
 					},
 				},
 				Version: JSONRPCVersion,
@@ -429,28 +428,28 @@ func TestNotificationMessages(t *testing.T) {
 			// Test marshaling
 			data, err := json.Marshal(tt.notification)
 			if err != nil {
-				t.Errorf("Marshal %s failed: %v", tt.name, err)
+				t.Fatalf("Marshal %s failed: %v", tt.name, err)
 			}
 
 			// Test unmarshaling
-			var decoded JSONRPCNotification[uint64]
+			var decoded JSONRPCNotification
 			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Errorf("Unmarshal %s failed: %v", tt.name, err)
+				t.Fatalf("Unmarshal %s failed: %v", tt.name, err)
 			}
 
 			// Test that the decoded notification matches the original
 			reencoded, err := json.Marshal(decoded)
 			if err != nil {
-				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
+				t.Fatalf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
 			// Unmarshal both original and re-encoded JSON into maps
 			var originalMap, reencodedMap map[string]any
 			if err := json.Unmarshal(data, &originalMap); err != nil {
-				t.Errorf("Failed to unmarshal original JSON: %v", err)
+				t.Fatalf("Failed to unmarshal original JSON: %v", err)
 			}
 			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
-				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+				t.Fatalf("Failed to unmarshal re-encoded JSON: %v", err)
 			}
 
 			// Compare the maps
@@ -465,11 +464,11 @@ func TestNotificationMessages(t *testing.T) {
 func TestResponseMessages(t *testing.T) {
 	tests := []struct {
 		name     string
-		response JSONRPCResponse[uint64]
+		response JSONRPCResponse
 	}{
 		{
 			name: "PingResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &PingResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -477,12 +476,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CreateMessageResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &CreateMessageResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -498,12 +498,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListRootsResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ListRootsResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -514,12 +515,13 @@ func TestResponseMessages(t *testing.T) {
 						{URI: "fo://bar"},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CompleteResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &CompleteResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -532,12 +534,13 @@ func TestResponseMessages(t *testing.T) {
 						Total:   &[]int{5}[0],
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "InitializeResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &InitializeResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -555,12 +558,13 @@ func TestResponseMessages(t *testing.T) {
 						Version: "version",
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "GetPromptResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &GetPromptResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -580,12 +584,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListPromptsResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ListPromptsResult{
 					PaginatedResult: PaginatedResult{
 						Meta: ResultMeta{
@@ -607,12 +612,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListResourcesResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ListResourcesResult{
 					PaginatedResult: PaginatedResult{
 						Meta: ResultMeta{
@@ -629,12 +635,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListResourceTemplatesResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ListResourceTemplatesResult{
 					PaginatedResult: PaginatedResult{
 						Meta: ResultMeta{
@@ -651,12 +658,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ReadResourceResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ReadResourceResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -675,12 +683,13 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "CallToolResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &CallToolResult{
 					Result: Result{
 						Meta: ResultMeta{
@@ -697,12 +706,13 @@ func TestResponseMessages(t *testing.T) {
 					},
 					IsError: &[]bool{false}[0],
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
 		{
 			name: "ListToolsResult",
-			response: JSONRPCResponse[uint64]{
+			response: JSONRPCResponse{
 				Result: &ListToolsResult{
 					PaginatedResult: PaginatedResult{
 						Meta: ResultMeta{
@@ -726,6 +736,7 @@ func TestResponseMessages(t *testing.T) {
 						},
 					},
 				},
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 			},
 		},
@@ -736,28 +747,28 @@ func TestResponseMessages(t *testing.T) {
 			// Test marshaling
 			data, err := json.Marshal(tt.response)
 			if err != nil {
-				t.Errorf("Marshal %s failed: %v", tt.name, err)
+				t.Fatalf("Marshal %s failed: %v", tt.name, err)
 			}
 
 			// Test unmarshaling
-			var decoded JSONRPCResponse[uint64]
+			var decoded JSONRPCResponse
 			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Errorf("Unmarshal %s failed: %v", tt.name, err)
+				t.Fatalf("Unmarshal %s failed: %v", tt.name, err)
 			}
 
 			// Test that the decoded response matches the original
 			reencoded, err := json.Marshal(decoded)
 			if err != nil {
-				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
+				t.Fatalf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
 			// Unmarshal both original and re-encoded JSON into maps
 			var originalMap, reencodedMap map[string]any
 			if err := json.Unmarshal(data, &originalMap); err != nil {
-				t.Errorf("Failed to unmarshal original JSON: %v", err)
+				t.Fatalf("Failed to unmarshal original JSON: %v", err)
 			}
 			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
-				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+				t.Fatalf("Failed to unmarshal re-encoded JSON: %v", err)
 			}
 
 			// Compare the maps
@@ -772,12 +783,12 @@ func TestResponseMessages(t *testing.T) {
 func TestErrorMessages(t *testing.T) {
 	tests := []struct {
 		name  string
-		error JSONRPCError[uint64]
+		error JSONRPCError
 	}{
 		{
 			name: "MethodNotFoundError",
-			error: JSONRPCError[uint64]{
-				ID:      RequestID[uint64]{Value: 3},
+			error: JSONRPCError{
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 				Err: Error{
 					Code:    JSONRPCMethodNotFoundError,
@@ -787,8 +798,8 @@ func TestErrorMessages(t *testing.T) {
 		},
 		{
 			name: "InvalidParamsError",
-			error: JSONRPCError[uint64]{
-				ID:      RequestID[uint64]{Value: 10},
+			error: JSONRPCError{
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 				Err: Error{
 					Code:    JSONRPCInvalidParamError,
@@ -798,8 +809,8 @@ func TestErrorMessages(t *testing.T) {
 		},
 		{
 			name: "InternalError",
-			error: JSONRPCError[uint64]{
-				ID:      RequestID[uint64]{Value: 7},
+			error: JSONRPCError{
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 				Err: Error{
 					Code:    JSONRPCInternalError,
@@ -809,8 +820,8 @@ func TestErrorMessages(t *testing.T) {
 		},
 		{
 			name: "CustomError",
-			error: JSONRPCError[uint64]{
-				ID:      RequestID[uint64]{Value: 1},
+			error: JSONRPCError{
+				ID:      RequestID{Value: uint64(2)},
 				Version: JSONRPCVersion,
 				Err: Error{
 					Code:    -32000,
@@ -828,28 +839,28 @@ func TestErrorMessages(t *testing.T) {
 			// Test marshaling
 			data, err := json.Marshal(tt.error)
 			if err != nil {
-				t.Errorf("Marshal %s failed: %v", tt.name, err)
+				t.Fatalf("Marshal %s failed: %v", tt.name, err)
 			}
 
 			// Test unmarshaling
-			var decoded JSONRPCError[uint64]
+			var decoded JSONRPCError
 			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Errorf("Unmarshal %s failed: %v", tt.name, err)
+				t.Fatalf("Unmarshal %s failed: %v", tt.name, err)
 			}
 
 			// Test that the decoded error matches the original
 			reencoded, err := json.Marshal(decoded)
 			if err != nil {
-				t.Errorf("Re-marshal of decoded %s failed: %v", tt.name, err)
+				t.Fatalf("Re-marshal of decoded %s failed: %v", tt.name, err)
 			}
 
 			// Unmarshal both original and re-encoded JSON into maps
 			var originalMap, reencodedMap map[string]any
 			if err := json.Unmarshal(data, &originalMap); err != nil {
-				t.Errorf("Failed to unmarshal original JSON: %v", err)
+				t.Fatalf("Failed to unmarshal original JSON: %v", err)
 			}
 			if err := json.Unmarshal(reencoded, &reencodedMap); err != nil {
-				t.Errorf("Failed to unmarshal re-encoded JSON: %v", err)
+				t.Fatalf("Failed to unmarshal re-encoded JSON: %v", err)
 			}
 
 			// Compare the maps

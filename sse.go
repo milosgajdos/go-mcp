@@ -24,7 +24,7 @@ const (
 )
 
 // SSEServerTransport implements Transport interface for server-side SSE
-type SSEServerTransport[T ID] struct {
+type SSEServerTransport struct {
 	options TransportOptions
 	server  *http.Server
 	addr    string
@@ -39,19 +39,19 @@ type SSEServerTransport[T ID] struct {
 	state atomic.Int32
 }
 
-func NewSSEServerTransport[T ID](addr string, opts ...TransportOption) (*SSEServerTransport[T], error) {
+func NewSSEServerTransport(addr string, opts ...TransportOption) (*SSEServerTransport, error) {
 	options := TransportOptions{}
 	for _, apply := range opts {
 		apply(&options)
 	}
 
-	return &SSEServerTransport[T]{
+	return &SSEServerTransport{
 		options: options,
 		addr:    addr,
 	}, nil
 }
 
-func (s *SSEServerTransport[T]) Start(context.Context) error {
+func (s *SSEServerTransport) Start(context.Context) error {
 	if !s.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
 		return ErrTransportStarted
 	}
@@ -101,7 +101,7 @@ func (s *SSEServerTransport[T]) Start(context.Context) error {
 	return nil
 }
 
-func (s *SSEServerTransport[T]) handleSSE(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServerTransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "SSE not supported", http.StatusInternalServerError)
@@ -123,6 +123,8 @@ func (s *SSEServerTransport[T]) handleSSE(w http.ResponseWriter, r *http.Request
 		case msg := <-s.outgoing:
 			data, err := json.Marshal(msg)
 			if err != nil {
+				fmt.Fprintf(w, "error parsing message: %v\n\n", err)
+				flusher.Flush()
 				continue
 			}
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
@@ -135,7 +137,7 @@ func (s *SSEServerTransport[T]) handleSSE(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *SSEServerTransport[T]) handleMessage(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServerTransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -154,7 +156,7 @@ func (s *SSEServerTransport[T]) handleMessage(w http.ResponseWriter, r *http.Req
 	}
 
 	var msg JSONRPCMessage
-	msg, err = parseJSONRPCMessage[T](body)
+	msg, err = parseJSONRPCMessage(body)
 	if err != nil {
 		http.Error(w, "Invalid message", http.StatusBadRequest)
 		return
@@ -168,11 +170,11 @@ func (s *SSEServerTransport[T]) handleMessage(w http.ResponseWriter, r *http.Req
 	case <-s.done:
 		return
 	default:
-		http.Error(w, "Queue full", http.StatusServiceUnavailable)
+		http.Error(w, "Full capacity reached", http.StatusServiceUnavailable)
 	}
 }
 
-func (s *SSEServerTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+func (s *SSEServerTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	if s.state.Load() != int32(stateRunning) {
 		return ErrTransportClosed
 	}
@@ -187,7 +189,7 @@ func (s *SSEServerTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) er
 	}
 }
 
-func (s *SSEServerTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+func (s *SSEServerTransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
 	if s.state.Load() != int32(stateRunning) {
 		return nil, ErrTransportClosed
 	}
@@ -202,13 +204,13 @@ func (s *SSEServerTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 	}
 }
 
-func (s *SSEServerTransport[T]) Addr() string {
+func (s *SSEServerTransport) Addr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.addr
 }
 
-func (s *SSEServerTransport[T]) Close() error {
+func (s *SSEServerTransport) Close() error {
 	if !s.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
 		return nil
 	}
@@ -233,7 +235,7 @@ func (s *SSEServerTransport[T]) Close() error {
 }
 
 // SSEClientTransport implements Transport interface for client-side SSE
-type SSEClientTransport[T ID] struct {
+type SSEClientTransport struct {
 	options TransportOptions
 	client  *http.Client
 	url     string
@@ -246,7 +248,7 @@ type SSEClientTransport[T ID] struct {
 	state atomic.Int32
 }
 
-func NewSSEClientTransport[T ID](serverURL string, opts ...TransportOption) (*SSEClientTransport[T], error) {
+func NewSSEClientTransport(serverURL string, opts ...TransportOption) (*SSEClientTransport, error) {
 	options := TransportOptions{}
 	for _, apply := range opts {
 		apply(&options)
@@ -257,7 +259,7 @@ func NewSSEClientTransport[T ID](serverURL string, opts ...TransportOption) (*SS
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	return &SSEClientTransport[T]{
+	return &SSEClientTransport{
 		options:  options,
 		client:   &http.Client{},
 		url:      serverURL,
@@ -266,7 +268,7 @@ func NewSSEClientTransport[T ID](serverURL string, opts ...TransportOption) (*SS
 	}, nil
 }
 
-func (c *SSEClientTransport[T]) Start(ctx context.Context) error {
+func (c *SSEClientTransport) Start(ctx context.Context) error {
 	if !c.state.CompareAndSwap(int32(stateStopped), int32(stateRunning)) {
 		return ErrTransportStarted
 	}
@@ -287,7 +289,7 @@ func (c *SSEClientTransport[T]) Start(ctx context.Context) error {
 }
 
 // handleClientSSE manages the client-side SSE connection
-func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan error) {
+func (c *SSEClientTransport) handleClientSSE(ctx context.Context, errCh chan error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/sse", nil)
 	if err != nil {
 		errCh <- fmt.Errorf("create SSE request failed: %v", err)
@@ -309,7 +311,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 		if err != nil {
 			if err == io.EOF || c.state.Load() == int32(stateStopped) {
 				select {
-				case c.incoming <- &JSONRPCError[T]{
+				case c.incoming <- &JSONRPCError{
 					Version: JSONRPCVersion,
 					Err: Error{
 						Code:    JSONRPCConnectionClosed,
@@ -336,7 +338,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 			data, err := reader.ReadString('\n')
 			if err != nil {
 				select {
-				case c.incoming <- &JSONRPCError[T]{
+				case c.incoming <- &JSONRPCError{
 					Version: JSONRPCVersion,
 					Err: Error{
 						Code:    JSONRPCConnectionClosed,
@@ -356,7 +358,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 				postURL, err := url.Parse(data)
 				if err != nil {
 					select {
-					case c.incoming <- &JSONRPCError[T]{
+					case c.incoming <- &JSONRPCError{
 						Version: JSONRPCVersion,
 						Err: Error{
 							Code:    JSONRPCConnectionClosed,
@@ -371,9 +373,9 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 				c.postURL = c.url + postURL.String()
 
 			case "message":
-				msg, err = parseJSONRPCMessage[T]([]byte(data))
+				msg, err = parseJSONRPCMessage([]byte(data))
 				if err != nil {
-					msg = &JSONRPCError[T]{
+					msg = &JSONRPCError{
 						Version: JSONRPCVersion,
 						Err: Error{
 							Code:    JSONRPCParseError,
@@ -393,7 +395,7 @@ func (c *SSEClientTransport[T]) handleClientSSE(ctx context.Context, errCh chan 
 	}
 }
 
-func (c *SSEClientTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) error {
+func (c *SSEClientTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	if c.state.Load() != int32(stateRunning) {
 		return ErrTransportClosed
 	}
@@ -426,7 +428,7 @@ func (c *SSEClientTransport[T]) Send(ctx context.Context, msg JSONRPCMessage) er
 	return nil
 }
 
-func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, error) {
+func (c *SSEClientTransport) Receive(ctx context.Context) (JSONRPCMessage, error) {
 	if c.state.Load() != int32(stateRunning) {
 		return nil, ErrTransportClosed
 	}
@@ -438,7 +440,7 @@ func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 		return nil, ErrTransportClosed
 	case msg := <-c.incoming:
 		if msg.JSONRPCMessageType() == JSONRPCErrorMsgType {
-			errMsg, ok := msg.(*JSONRPCError[T])
+			errMsg, ok := msg.(*JSONRPCError)
 			if ok {
 				if errMsg.Err.Code == JSONRPCConnectionClosed {
 					if err := c.Close(); err != nil {
@@ -452,7 +454,7 @@ func (c *SSEClientTransport[T]) Receive(ctx context.Context) (JSONRPCMessage, er
 	}
 }
 
-func (c *SSEClientTransport[T]) Close() error {
+func (c *SSEClientTransport) Close() error {
 	if !c.state.CompareAndSwap(int32(stateRunning), int32(stateStopped)) {
 		return nil
 	}
