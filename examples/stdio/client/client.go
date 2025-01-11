@@ -20,16 +20,16 @@ func main() {
 
 	log.Printf("starting up...")
 
-	transport := mcp.NewStdioTransport[uint64]()
+	transport := mcp.NewStdioTransport()
 
-	protocol, err := mcp.NewProtocol(mcp.WithTransport[uint64](transport))
+	protocol, err := mcp.NewProtocol(mcp.WithTransport(transport))
 	if err != nil {
 		log.Fatalf("failed to create protocol: %v", err)
 	}
 
 	client, err := mcp.NewClient(
 		mcp.WithClientProtocol(protocol),
-		mcp.WithClientCapabilities[uint64](mcp.ClientCapabilities{
+		mcp.WithClientCapabilities(mcp.ClientCapabilities{
 			Roots: &mcp.ClientCapabilitiesRoots{},
 		}),
 	)

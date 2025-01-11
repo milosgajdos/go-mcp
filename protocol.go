@@ -33,19 +33,19 @@ var (
 )
 
 // Options are client options
-type Options[T ID] struct {
+type Options struct {
 	RespTimeout   time.Duration
 	HandleTimeout time.Duration
 	WaitTimeout   time.Duration
 	Transport     Transport
-	Progress      ProgressHandler[T]
+	Progress      ProgressHandler
 }
 
 // Option is functional graph option.
-type Option[T ID] func(*Options[T])
+type Option func(*Options)
 
-func DefaultOptions[T ID]() Options[T] {
-	return Options[T]{
+func DefaultOptions() Options {
+	return Options{
 		RespTimeout:   DefaultRespTimeout,
 		HandleTimeout: DefaultHandleTimeout,
 		WaitTimeout:   DefaultWaitTimeout,
@@ -54,94 +54,70 @@ func DefaultOptions[T ID]() Options[T] {
 }
 
 // WithRespTimeout sets response timeout option.
-func WithRespTimeout[T ID](timeout time.Duration) Option[T] {
-	return func(o *Options[T]) {
+func WithRespTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
 		o.RespTimeout = timeout
 	}
 }
 
 // WithHandleTimeout sets message handling timeout option.
-func WithHandleTimeout[T ID](timeout time.Duration) Option[T] {
-	return func(o *Options[T]) {
+func WithHandleTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
 		o.HandleTimeout = timeout
 	}
 }
 
 // WithWaitTimeout sets response stream timeout option.
-func WithWaitTimeout[T ID](timeout time.Duration) Option[T] {
-	return func(o *Options[T]) {
+func WithWaitTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
 		o.WaitTimeout = timeout
 	}
 }
 
 // WithTransport sets protocol transport.
-func WithTransport[T ID](tr Transport) Option[T] {
-	return func(o *Options[T]) {
+func WithTransport(tr Transport) Option {
+	return func(o *Options) {
 		o.Transport = tr
 	}
 }
 
-type protocolID[T ID] struct {
-	nextID atomic.Uint64
-}
-
-func (p *protocolID[T]) Next() RequestID[T] {
-	id := p.nextID.Add(1)
-	return RequestID[T]{Value: convertID[T](id)}
-}
-
-// Helper function to convert uint64 to T
-func convertID[T ID](id uint64) T {
-	var zero T
-	switch any(zero).(type) {
-	case uint64:
-		return any(id).(T) // T is uint64
-	case string:
-		return any(fmt.Sprintf("%d", id)).(T) // T is string
-	default:
-		// NOTE: this should never happen as long as
-		// ID continues to be constrained by ~uint64 | ~string
-		panic("unsupported type")
-	}
-}
-
 // RequestHandler for handling JSON-RPC requests.
-type RequestHandler[T ID] func(ctx context.Context, n *JSONRPCRequest[T]) (*JSONRPCResponse[T], error)
+type RequestHandler func(ctx context.Context, n *JSONRPCRequest) (*JSONRPCResponse, error)
 
 // NotificationHandler for handling JSON-RPC notifications.
-type NotificationHandler[T ID] func(ctx context.Context, n *JSONRPCNotification[T]) error
+type NotificationHandler func(ctx context.Context, n *JSONRPCNotification) error
 
 // ProgressHandler for handling progress notifications.
-type ProgressHandler[T ID] func(ctx context.Context, progress float64, total *int64) error
+type ProgressHandler func(ctx context.Context, progress float64, total *int64) error
 
 // Go doesn's provide sum types so this is our "union"
 // JSONRPCResponse | JSONRPCError
-type RespOrError[T ID] struct {
-	Resp *JSONRPCResponse[T]
-	Err  *JSONRPCError[T]
+type RespOrError struct {
+	Resp *JSONRPCResponse
+	Err  *JSONRPCError
 }
 
 // Protocol is a Transport agnostic implementation of MCP communication protocol.
-type Protocol[T ID] struct {
+type Protocol struct {
 	transport Transport
 
 	// protocol options
-	options Options[T]
+	options Options
 
 	// For tracking pending requests
 	pendingMu sync.RWMutex
-	pending   map[RequestID[T]]chan RespOrError[T]
-	nextID    protocolID[T]
+	pending   map[RequestID]chan RespOrError
+	nextID    atomic.Uint64
 	// progress notification handlers
-	progress map[ProgressToken[T]]ProgressHandler[T]
+	progress map[ProgressToken]ProgressHandler
 
 	// request handlers
 	handlersMu sync.RWMutex
-	handlers   map[RequestMethod]RequestHandler[T]
+	handlers   map[RequestMethod]RequestHandler
 
 	// notification handlers
 	notifyMu sync.RWMutex
-	notify   map[RequestMethod]NotificationHandler[T]
+	notify   map[RequestMethod]NotificationHandler
 
 	// Lifetime management
 	ctx    context.Context
@@ -152,21 +128,21 @@ type Protocol[T ID] struct {
 }
 
 // NewProtocol creates a new instances of Protocol and returns it.
-func NewProtocol[T ID](opts ...Option[T]) (*Protocol[T], error) {
-	options := DefaultOptions[T]()
+func NewProtocol(opts ...Option) (*Protocol, error) {
+	options := DefaultOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	p := &Protocol[T]{
+	p := &Protocol{
 		transport: options.Transport,
 		options:   options,
-		pending:   make(map[RequestID[T]]chan RespOrError[T]),
-		handlers:  make(map[RequestMethod]RequestHandler[T]),
-		notify:    make(map[RequestMethod]NotificationHandler[T]),
-		progress:  make(map[ProgressToken[T]]ProgressHandler[T]),
+		pending:   make(map[RequestID]chan RespOrError),
+		handlers:  make(map[RequestMethod]RequestHandler),
+		notify:    make(map[RequestMethod]NotificationHandler),
+		progress:  make(map[ProgressToken]ProgressHandler),
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -180,16 +156,16 @@ func NewProtocol[T ID](opts ...Option[T]) (*Protocol[T], error) {
 	return p, nil
 }
 
-func (p *Protocol[T]) handlePing(_ context.Context, req *JSONRPCRequest[T]) (*JSONRPCResponse[T], error) {
-	return &JSONRPCResponse[T]{
+func (p *Protocol) handlePing(_ context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
+	return &JSONRPCResponse{
 		ID:      req.ID,
 		Version: JSONRPCVersion,
 		Result:  &PingResult{},
 	}, nil
 }
 
-func (p *Protocol[T]) handleCanceled(ctx context.Context, n *JSONRPCNotification[T]) error {
-	cn, ok := n.Notification.(*CancelledNotification[T])
+func (p *Protocol) handleCanceled(ctx context.Context, n *JSONRPCNotification) error {
+	cn, ok := n.Notification.(*CancelledNotification)
 	if !ok {
 		return fmt.Errorf("invalid notification, expected: %q", CancelledNotificationMethod)
 	}
@@ -205,7 +181,7 @@ func (p *Protocol[T]) handleCanceled(ctx context.Context, n *JSONRPCNotification
 	if cn.Params.Reason != nil {
 		msg = fmt.Sprintf("caneling request: %s", *cn.Params.Reason)
 	}
-	errResp := &JSONRPCError[T]{
+	errResp := &JSONRPCError{
 		ID:      reqID,
 		Version: JSONRPCVersion,
 		Err: Error{
@@ -214,7 +190,7 @@ func (p *Protocol[T]) handleCanceled(ctx context.Context, n *JSONRPCNotification
 		},
 	}
 	select {
-	case ch <- RespOrError[T]{Err: errResp}:
+	case ch <- RespOrError{Err: errResp}:
 	case <-time.After(p.options.WaitTimeout):
 	case <-p.ctx.Done():
 	case <-ctx.Done():
@@ -223,8 +199,8 @@ func (p *Protocol[T]) handleCanceled(ctx context.Context, n *JSONRPCNotification
 	return nil
 }
 
-func (p *Protocol[T]) handleProgress(ctx context.Context, n *JSONRPCNotification[T]) error {
-	pn, ok := n.Notification.(*ProgressNotification[T])
+func (p *Protocol) handleProgress(ctx context.Context, n *JSONRPCNotification) error {
+	pn, ok := n.Notification.(*ProgressNotification)
 	if !ok {
 		return fmt.Errorf("invalid notification, expected: %q", ProgressNotificationMethod)
 	}
@@ -239,14 +215,14 @@ func (p *Protocol[T]) handleProgress(ctx context.Context, n *JSONRPCNotification
 
 // RegisterRequestHandler registers a handler for the given request method.
 // If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T]) RegisterRequestHandler(method RequestMethod, handler RequestHandler[T]) {
+func (p *Protocol) RegisterRequestHandler(method RequestMethod, handler RequestHandler) {
 	p.handlersMu.Lock()
 	defer p.handlersMu.Unlock()
 	p.handlers[method] = handler
 }
 
 // DeregisterRequestHandler deregisters a handler for the given request method.
-func (p *Protocol[T]) DeregisterRequestHandler(method RequestMethod) {
+func (p *Protocol) DeregisterRequestHandler(method RequestMethod) {
 	p.handlersMu.Lock()
 	defer p.handlersMu.Unlock()
 	delete(p.handlers, method)
@@ -254,14 +230,14 @@ func (p *Protocol[T]) DeregisterRequestHandler(method RequestMethod) {
 
 // RegisterNotificationHandler registers a handler for the given notification request method.
 // If there is an existing handler registered, this method overrides it.
-func (p *Protocol[T]) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler[T]) {
+func (p *Protocol) RegisterNotificationHandler(method RequestMethod, handler NotificationHandler) {
 	p.notifyMu.Lock()
 	defer p.notifyMu.Unlock()
 	p.notify[method] = handler
 }
 
 // DeregisterNotificationHandler deregisters a handler for the given request method.
-func (p *Protocol[T]) DeregisterNotificationHandler(method RequestMethod) {
+func (p *Protocol) DeregisterNotificationHandler(method RequestMethod) {
 	p.notifyMu.Lock()
 	defer p.notifyMu.Unlock()
 	delete(p.notify, method)
@@ -269,7 +245,7 @@ func (p *Protocol[T]) DeregisterNotificationHandler(method RequestMethod) {
 
 // Connect establishes protocol connection on top of the given transport
 // and starts receiving messages sent to it.
-func (p *Protocol[T]) Connect() error {
+func (p *Protocol) Connect() error {
 	if !p.running.CompareAndSwap(false, true) {
 		return ErrAlreadyConnected
 	}
@@ -306,7 +282,7 @@ func (p *Protocol[T]) Connect() error {
 }
 
 // Close terminates the protocol and its transport.
-func (p *Protocol[T]) Close(ctx context.Context) error {
+func (p *Protocol) Close(ctx context.Context) error {
 	defer p.running.Store(false)
 	defer p.cancel()
 
@@ -324,7 +300,7 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 
 	// notify all pending requests
 	for reqID, ch := range p.pending {
-		errResp := &JSONRPCError[T]{
+		errResp := &JSONRPCError{
 			ID:      reqID,
 			Version: JSONRPCVersion,
 			Err: Error{
@@ -333,7 +309,7 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 			},
 		}
 		select {
-		case ch <- RespOrError[T]{Err: errResp}:
+		case ch <- RespOrError{Err: errResp}:
 		case <-time.After(p.options.WaitTimeout):
 		case <-p.ctx.Done():
 		case <-ctx.Done():
@@ -345,23 +321,24 @@ func (p *Protocol[T]) Close(ctx context.Context) error {
 }
 
 // SendRequest sends a request and waits for response
-func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], opts ...Option[T]) (*JSONRPCResponse[T], error) {
-	options := DefaultOptions[T]()
+func (p *Protocol) SendRequest(ctx context.Context, req *JSONRPCRequest, opts ...Option) (*JSONRPCResponse, error) {
+	options := DefaultOptions()
 	for _, apply := range opts {
 		apply(&options)
 	}
 
 	// Returns the old value and increments
-	req.ID = p.nextID.Next()
+	id := p.nextID.Add(1)
+	req.ID = RequestID{Value: id}
 	req.Version = JSONRPCVersion
 
 	// Create response channel and register request
-	respChan := make(chan RespOrError[T], 1)
+	respChan := make(chan RespOrError, 1)
 
 	p.pendingMu.Lock()
 	p.pending[req.ID] = respChan
 	if options.Progress != nil {
-		p.progress[ProgressToken[T]{Value: req.ID.Value}] = options.Progress
+		p.progress[ProgressToken(req.ID)] = options.Progress
 	}
 	p.pendingMu.Unlock()
 
@@ -369,7 +346,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 	defer func() {
 		p.pendingMu.Lock()
 		delete(p.pending, req.ID)
-		delete(p.progress, ProgressToken[T]{Value: req.ID.Value})
+		delete(p.progress, ProgressToken(req.ID))
 		p.pendingMu.Unlock()
 	}()
 
@@ -384,7 +361,7 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 		}
 		return result.Resp, nil
 	case <-time.After(p.options.RespTimeout):
-		return nil, &JSONRPCError[T]{
+		return nil, &JSONRPCError{
 			ID: req.ID,
 			Err: Error{
 				Code:    JSONRPCRequestTimeout,
@@ -399,13 +376,13 @@ func (p *Protocol[T]) SendRequest(ctx context.Context, req *JSONRPCRequest[T], o
 }
 
 // SendNotification sends a notification (fire and forget)
-func (p *Protocol[T]) SendNotification(ctx context.Context, notif *JSONRPCNotification[T]) error {
+func (p *Protocol) SendNotification(ctx context.Context, notif *JSONRPCNotification) error {
 	notif.Version = JSONRPCVersion
 	return p.transport.Send(ctx, notif)
 }
 
 // recvMsg handles incoming messages from the transport
-func (p *Protocol[T]) recvMsg() {
+func (p *Protocol) recvMsg() {
 	defer p.running.Store(false)
 
 	for {
@@ -434,13 +411,13 @@ func (p *Protocol[T]) recvMsg() {
 	}
 }
 
-func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
+func (p *Protocol) handleMessage(msg JSONRPCMessage) {
 	ctx, cancel := context.WithTimeout(p.ctx, p.options.HandleTimeout)
 	defer cancel()
 
 	switch msg.JSONRPCMessageType() {
 	case JSONRPCRequestMsgType:
-		req, ok := msg.(*JSONRPCRequest[T])
+		req, ok := msg.(*JSONRPCRequest)
 		if !ok {
 			log.Printf("invalid request message type: %T", msg)
 			return
@@ -448,7 +425,7 @@ func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
 		p.handleRequest(ctx, req)
 
 	case JSONRPCNotificationMsgType:
-		notif, ok := msg.(*JSONRPCNotification[T])
+		notif, ok := msg.(*JSONRPCNotification)
 		if !ok {
 			log.Printf("invalid notification message type: %T", msg)
 			return
@@ -456,7 +433,7 @@ func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
 		p.handleNotification(ctx, notif)
 
 	case JSONRPCResponseMsgType:
-		resp, ok := msg.(*JSONRPCResponse[T])
+		resp, ok := msg.(*JSONRPCResponse)
 		if !ok {
 			log.Printf("invalid response message type: %T", msg)
 			return
@@ -464,7 +441,7 @@ func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
 		p.handleResponse(ctx, resp)
 
 	case JSONRPCErrorMsgType:
-		errMsg, ok := msg.(*JSONRPCError[T])
+		errMsg, ok := msg.(*JSONRPCError)
 		if !ok {
 			log.Printf("invalid error message type: %T", msg)
 			return
@@ -473,14 +450,14 @@ func (p *Protocol[T]) handleMessage(msg JSONRPCMessage) {
 	}
 }
 
-func (p *Protocol[T]) handleError(ctx context.Context, errMsg *JSONRPCError[T]) {
+func (p *Protocol) handleError(ctx context.Context, errMsg *JSONRPCError) {
 	p.pendingMu.RLock()
 	ch, ok := p.pending[errMsg.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
 		select {
-		case ch <- RespOrError[T]{Err: errMsg}:
+		case ch <- RespOrError{Err: errMsg}:
 		case <-time.After(p.options.WaitTimeout):
 		case <-p.ctx.Done():
 		case <-ctx.Done():
@@ -488,14 +465,14 @@ func (p *Protocol[T]) handleError(ctx context.Context, errMsg *JSONRPCError[T]) 
 	}
 }
 
-func (p *Protocol[T]) handleResponse(ctx context.Context, resp *JSONRPCResponse[T]) {
+func (p *Protocol) handleResponse(ctx context.Context, resp *JSONRPCResponse) {
 	p.pendingMu.RLock()
 	ch, ok := p.pending[resp.ID]
 	p.pendingMu.RUnlock()
 
 	if ok {
 		select {
-		case ch <- RespOrError[T]{Resp: resp}:
+		case ch <- RespOrError{Resp: resp}:
 		case <-time.After(p.options.WaitTimeout):
 		case <-p.ctx.Done():
 		case <-ctx.Done():
@@ -503,7 +480,7 @@ func (p *Protocol[T]) handleResponse(ctx context.Context, resp *JSONRPCResponse[
 	}
 }
 
-func (p *Protocol[T]) handleNotification(ctx context.Context, n *JSONRPCNotification[T]) {
+func (p *Protocol) handleNotification(ctx context.Context, n *JSONRPCNotification) {
 	p.notifyMu.RLock()
 	handler, ok := p.notify[n.Notification.GetMethod()]
 	p.notifyMu.RUnlock()
@@ -515,13 +492,13 @@ func (p *Protocol[T]) handleNotification(ctx context.Context, n *JSONRPCNotifica
 	}
 }
 
-func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T]) {
+func (p *Protocol) handleRequest(ctx context.Context, req *JSONRPCRequest) {
 	p.handlersMu.RLock()
 	handler, ok := p.handlers[req.Request.GetMethod()]
 	p.handlersMu.RUnlock()
 
 	if !ok {
-		errResp := &JSONRPCError[T]{
+		errResp := &JSONRPCError{
 			ID:      req.ID,
 			Version: JSONRPCVersion,
 			Err: Error{
@@ -537,7 +514,7 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T])
 
 	resp, err := handler(ctx, req)
 	if err != nil {
-		errResp := &JSONRPCError[T]{
+		errResp := &JSONRPCError{
 			ID:      req.ID,
 			Version: JSONRPCVersion,
 			Err: Error{
@@ -555,7 +532,7 @@ func (p *Protocol[T]) handleRequest(ctx context.Context, req *JSONRPCRequest[T])
 		return
 	}
 
-	out := &JSONRPCResponse[T]{
+	out := &JSONRPCResponse{
 		ID:      req.ID,
 		Version: JSONRPCVersion,
 		Result:  resp.Result,

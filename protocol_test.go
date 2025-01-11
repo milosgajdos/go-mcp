@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func MustNewProtocol[T ID](t *testing.T, opts ...Option[T]) *Protocol[T] {
+func MustNewProtocol(t *testing.T, opts ...Option) *Protocol {
 	p, err := NewProtocol(opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func MustNewProtocol[T ID](t *testing.T, opts ...Option[T]) *Protocol[T] {
 func TestProtocol_Connect(t *testing.T) {
 	t.Run("Successful Connect", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -30,7 +30,7 @@ func TestProtocol_Connect(t *testing.T) {
 
 	t.Run("Already Connected", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -41,7 +41,7 @@ func TestProtocol_Connect(t *testing.T) {
 	})
 
 	t.Run("Invalid Transport", func(t *testing.T) {
-		invalidProtocol := MustNewProtocol(t, WithTransport[uint64](nil)) // nil transport
+		invalidProtocol := MustNewProtocol(t, WithTransport(nil)) // nil transport
 		if err := invalidProtocol.Connect(); err == nil || err != ErrInvalidTransport {
 			t.Fatalf("Expected invalid transport error, got: %v", err)
 		}
@@ -51,7 +51,7 @@ func TestProtocol_Connect(t *testing.T) {
 func TestProtocol_Close(t *testing.T) {
 	t.Run("Successful Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -66,7 +66,7 @@ func TestProtocol_Close(t *testing.T) {
 
 	t.Run("Close When Already Closed", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
@@ -81,13 +81,13 @@ func TestProtocol_Close(t *testing.T) {
 
 	t.Run("Close With Pending Requests", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Protocol failed to connect: %v", err)
 		}
 		p.pendingMu.Lock()
-		p.pending[RequestID[uint64]{Value: 1}] = make(chan RespOrError[uint64], 1)
+		p.pending[RequestID{Value: uint64(1)}] = make(chan RespOrError, 1)
 		p.pendingMu.Unlock()
 
 		if err := p.Close(context.Background()); err != nil {
@@ -103,8 +103,8 @@ func TestProtocol_SendRequest(t *testing.T) {
 	t.Run("Successful Request Response", func(t *testing.T) {
 		tr := NewInMemTransport()
 		p := MustNewProtocol(t,
-			WithTransport[uint64](tr),
-			WithRespTimeout[uint64](100*time.Millisecond),
+			WithTransport(tr),
+			WithRespTimeout(100*time.Millisecond),
 		)
 
 		if err := p.Connect(); err != nil {
@@ -113,21 +113,24 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 		// Register handler for ping
 		p.RegisterRequestHandler(PingRequestMethod,
-			func(_ context.Context, req *JSONRPCRequest[uint64]) (*JSONRPCResponse[uint64], error) {
-				return &JSONRPCResponse[uint64]{
+			func(_ context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
+				return &JSONRPCResponse{
 					Result:  &PingResult{},
 					ID:      req.ID,
 					Version: JSONRPCVersion,
 				}, nil
 			})
 
-		resp, err := p.SendRequest(context.Background(), &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
-					Method: PingRequestMethod,
+		resp, err := p.SendRequest(context.Background(),
+			&JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
+						Method: PingRequestMethod,
+					},
 				},
-			},
-		})
+				ID:      NewRequestID(uint64(1)),
+				Version: JSONRPCVersion,
+			})
 
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -147,23 +150,26 @@ func TestProtocol_SendRequest(t *testing.T) {
 		timeout := 50 * time.Millisecond
 		tr := NewInMemTransport(WithRecvDelay(2 * timeout))
 		p := MustNewProtocol(t,
-			WithTransport[uint64](tr),
-			WithRespTimeout[uint64](timeout),
+			WithTransport(tr),
+			WithRespTimeout(timeout),
 		)
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
 		}
 
-		_, err := p.SendRequest(context.Background(), &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
-					Method: PingRequestMethod,
+		_, err := p.SendRequest(context.Background(),
+			&JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
+						Method: PingRequestMethod,
+					},
 				},
-			},
-		})
+				ID:      NewRequestID(uint64(1)),
+				Version: JSONRPCVersion,
+			})
 
-		var rpcErr *JSONRPCError[uint64]
+		var rpcErr *JSONRPCError
 		if !errors.As(err, &rpcErr) || rpcErr.Err.Code != JSONRPCRequestTimeout {
 			t.Fatalf("Expected timeout error, got: %v", err)
 		}
@@ -174,7 +180,7 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 	t.Run("Request With Canceled Context", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -183,13 +189,16 @@ func TestProtocol_SendRequest(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := p.SendRequest(ctx, &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
-					Method: PingRequestMethod,
+		_, err := p.SendRequest(ctx,
+			&JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
+						Method: PingRequestMethod,
+					},
 				},
-			},
-		})
+				ID:      NewRequestID(uint64(1)),
+				Version: JSONRPCVersion,
+			})
 
 		if err != context.Canceled {
 			t.Fatalf("Expected context.Canceled, got: %v", err)
@@ -201,7 +210,7 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 	t.Run("Request After Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -210,13 +219,16 @@ func TestProtocol_SendRequest(t *testing.T) {
 			t.Fatalf("failed to close protocol: %v", err)
 		}
 
-		_, err := p.SendRequest(context.Background(), &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
-					Method: PingRequestMethod,
+		_, err := p.SendRequest(context.Background(),
+			&JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
+						Method: PingRequestMethod,
+					},
 				},
-			},
-		})
+				ID:      NewRequestID(uint64(1)),
+				Version: JSONRPCVersion,
+			})
 
 		if err == nil || !errors.Is(err, ErrTransportClosed) {
 			t.Fatalf("Expected transport closed error, got: %v", err)
@@ -226,8 +238,8 @@ func TestProtocol_SendRequest(t *testing.T) {
 	t.Run("Concurrent Requests", func(t *testing.T) {
 		tr := NewInMemTransport()
 		p := MustNewProtocol(t,
-			WithTransport[uint64](tr),
-			WithRespTimeout[uint64](100*time.Millisecond),
+			WithTransport(tr),
+			WithRespTimeout(100*time.Millisecond),
 		)
 
 		if err := p.Connect(); err != nil {
@@ -236,8 +248,8 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 		// Register ping handler
 		p.RegisterRequestHandler(PingRequestMethod,
-			func(_ context.Context, req *JSONRPCRequest[uint64]) (*JSONRPCResponse[uint64], error) {
-				return &JSONRPCResponse[uint64]{
+			func(_ context.Context, req *JSONRPCRequest) (*JSONRPCResponse, error) {
+				return &JSONRPCResponse{
 					Result:  &PingResult{},
 					ID:      req.ID,
 					Version: JSONRPCVersion,
@@ -249,13 +261,16 @@ func TestProtocol_SendRequest(t *testing.T) {
 
 		for range numRequests {
 			go func() {
-				_, err := p.SendRequest(context.Background(), &JSONRPCRequest[uint64]{
-					Request: &PingRequest[uint64]{
-						Request: Request[uint64]{
-							Method: PingRequestMethod,
+				_, err := p.SendRequest(context.Background(),
+					&JSONRPCRequest{
+						Request: &PingRequest{
+							Request: Request{
+								Method: PingRequestMethod,
+							},
 						},
-					},
-				})
+						ID:      NewRequestID(uint64(1)),
+						Version: JSONRPCVersion,
+					})
 				errs <- err
 			}()
 		}
@@ -274,13 +289,13 @@ func TestProtocol_SendRequest(t *testing.T) {
 func TestProtocol_SendNotification(t *testing.T) {
 	t.Run("Successful Notification", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
 		}
 
-		err := p.SendNotification(context.Background(), &JSONRPCNotification[uint64]{
+		err := p.SendNotification(context.Background(), &JSONRPCNotification{
 			Notification: &InitializedNotification{
 				Notification: Notification{
 					Method: InitializedNotificationMethod,
@@ -298,7 +313,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Notification With Canceled Context", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -307,7 +322,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := p.SendNotification(ctx, &JSONRPCNotification[uint64]{
+		err := p.SendNotification(ctx, &JSONRPCNotification{
 			Notification: &InitializedNotification{
 				Notification: Notification{
 					Method: InitializedNotificationMethod,
@@ -325,7 +340,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Notification After Close", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -334,7 +349,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 			t.Fatalf("failed to close protocol: %v", err)
 		}
 
-		err := p.SendNotification(context.Background(), &JSONRPCNotification[uint64]{
+		err := p.SendNotification(context.Background(), &JSONRPCNotification{
 			Notification: &InitializedNotification{
 				Notification: Notification{
 					Method: InitializedNotificationMethod,
@@ -349,7 +364,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 	t.Run("Concurrent Notifications", func(t *testing.T) {
 		tr := NewInMemTransport()
-		p := MustNewProtocol(t, WithTransport[uint64](tr))
+		p := MustNewProtocol(t, WithTransport(tr))
 
 		if err := p.Connect(); err != nil {
 			t.Fatalf("Failed to connect: %v", err)
@@ -360,7 +375,7 @@ func TestProtocol_SendNotification(t *testing.T) {
 
 		for range numNotifications {
 			go func() {
-				err := p.SendNotification(context.Background(), &JSONRPCNotification[uint64]{
+				err := p.SendNotification(context.Background(), &JSONRPCNotification{
 					Notification: &InitializedNotification{
 						Notification: Notification{
 							Method: InitializedNotificationMethod,

@@ -14,8 +14,8 @@ import (
 	"testing"
 )
 
-func SSEServerTransportMustStart[T ID](ctx context.Context, t *testing.T) (*SSEServerTransport[T], string) {
-	srv, err := NewSSEServerTransport[T](":0") // Use dynamic port
+func SSEServerTransportMustStart(ctx context.Context, t *testing.T) (*SSEServerTransport, string) {
+	srv, err := NewSSEServerTransport(":0") // Use dynamic port
 	if err != nil {
 		t.Fatalf("NewSSEServerTransport() error = %v", err)
 	}
@@ -25,7 +25,7 @@ func SSEServerTransportMustStart[T ID](ctx context.Context, t *testing.T) (*SSES
 	return srv, "http://" + srv.Addr()
 }
 
-func SSEServerTransportMustClose[T ID](t *testing.T, tr *SSEServerTransport[T]) {
+func SSEServerTransportMustClose(t *testing.T, tr *SSEServerTransport) {
 	if err := tr.Close(); err != nil {
 		t.Fatalf("failed closing transport: %v", err)
 	}
@@ -33,7 +33,7 @@ func SSEServerTransportMustClose[T ID](t *testing.T, tr *SSEServerTransport[T]) 
 
 func TestSSEServerTransport_Start(t *testing.T) {
 	t.Run("successful start", func(t *testing.T) {
-		srv, err := NewSSEServerTransport[uint64](":0")
+		srv, err := NewSSEServerTransport(":0")
 		if err != nil {
 			t.Fatalf("NewSSEServerTransport() error = %v", err)
 		}
@@ -44,7 +44,7 @@ func TestSSEServerTransport_Start(t *testing.T) {
 	})
 
 	t.Run("double start", func(t *testing.T) {
-		srv, err := NewSSEServerTransport[uint64](":0")
+		srv, err := NewSSEServerTransport(":0")
 		if err != nil {
 			t.Fatalf("NewSSEServerTransport() error = %v", err)
 		}
@@ -61,7 +61,7 @@ func TestSSEServerTransport_Start(t *testing.T) {
 func TestSSEServerTransport_Send(t *testing.T) {
 	t.Run("successful send", func(t *testing.T) {
 		ctx := context.Background()
-		srv, addr := SSEServerTransportMustStart[uint64](ctx, t)
+		srv, addr := SSEServerTransportMustStart(ctx, t)
 		defer SSEServerTransportMustClose(t, srv)
 
 		readyCh := make(chan error, 1)
@@ -81,12 +81,13 @@ func TestSSEServerTransport_Send(t *testing.T) {
 
 			for scanner.Scan() {
 				line := scanner.Text()
-				if strings.HasPrefix(line, "event: endpoint") {
+				switch {
+				case strings.HasPrefix(line, "event: endpoint"):
 					// We got the initial endpoint event
 					gotEndpoint = true
 					// signal the main goroutine: "we got the SSE connection
 					readyCh <- nil
-				} else if strings.HasPrefix(line, "event: message") {
+				case strings.HasPrefix(line, "event: message"):
 					// Next line should be the `data:` line
 					if !scanner.Scan() {
 						msgCh <- "no data line"
@@ -95,6 +96,8 @@ func TestSSEServerTransport_Send(t *testing.T) {
 					dataLine := scanner.Text()
 					msgCh <- dataLine
 					return
+				case strings.HasPrefix(line, "error"):
+					msgCh <- fmt.Sprintf("sse error: %v", line)
 				}
 			}
 			// If we exit the loop, either EOF or error
@@ -111,18 +114,18 @@ func TestSSEServerTransport_Send(t *testing.T) {
 		}
 
 		// Now we can safely send from the server side
-		msg := &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
+		msg := &JSONRPCRequest{
+			Request: &PingRequest{
+				Request: Request{
 					Method: PingRequestMethod,
 				},
 			},
+			ID:      NewRequestID(uint64(1)),
 			Version: JSONRPCVersion,
 		}
 		if err := srv.Send(ctx, msg); err != nil {
 			t.Fatalf("Send() error = %v", err)
 		}
-
 		// Expect the "event: message" SSE with "data: ..." next
 		dataLine := <-msgCh
 		if !strings.HasPrefix(dataLine, "data: ") {
@@ -131,7 +134,7 @@ func TestSSEServerTransport_Send(t *testing.T) {
 	})
 
 	t.Run("send before start", func(t *testing.T) {
-		srv, err := NewSSEServerTransport[uint64](":0")
+		srv, err := NewSSEServerTransport(":0")
 		if err != nil {
 			t.Fatalf("NewSSEServerTransport() error = %v", err)
 		}
@@ -144,7 +147,7 @@ func TestSSEServerTransport_Send(t *testing.T) {
 func TestSSEServerTransport_Receive(t *testing.T) {
 	t.Run("successful receive", func(t *testing.T) {
 		ctx := context.Background()
-		srv, addr := SSEServerTransportMustStart[uint64](ctx, t)
+		srv, addr := SSEServerTransportMustStart(ctx, t)
 		defer SSEServerTransportMustClose(t, srv)
 
 		// Open the SSE stream to get the sessionId
@@ -172,12 +175,13 @@ func TestSSEServerTransport_Receive(t *testing.T) {
 		}
 
 		// Craft and send a test JSON-RPC message
-		msg := &JSONRPCRequest[uint64]{
-			Request: &PingRequest[uint64]{
-				Request: Request[uint64]{
+		msg := &JSONRPCRequest{
+			Request: &PingRequest{
+				Request: Request{
 					Method: PingRequestMethod,
 				},
 			},
+			ID:      NewRequestID(uint64(1)),
 			Version: JSONRPCVersion,
 		}
 		data, err := json.Marshal(msg)
@@ -207,9 +211,9 @@ func TestSSEServerTransport_Receive(t *testing.T) {
 			t.Errorf("Receive() error = %v", err)
 		}
 
-		reqMsg, ok := received.(*JSONRPCRequest[uint64])
+		reqMsg, ok := received.(*JSONRPCRequest)
 		if !ok {
-			t.Fatalf("received type = %T, want *JSONRPCRequest[uint64]", received)
+			t.Fatalf("received type = %T, want *JSONRPCRequest", received)
 		}
 
 		if reqMsg.Version != JSONRPCVersion {
@@ -221,7 +225,7 @@ func TestSSEServerTransport_Receive(t *testing.T) {
 	})
 
 	t.Run("receive before start", func(t *testing.T) {
-		srv, err := NewSSEServerTransport[uint64](":0")
+		srv, err := NewSSEServerTransport(":0")
 		if err != nil {
 			t.Fatalf("NewSSEServerTransport() error = %v", err)
 		}
@@ -252,12 +256,13 @@ func TestSSEClientTransport(t *testing.T) {
 			flusher.Flush()
 
 			// Send test message
-			msg := &JSONRPCRequest[uint64]{
-				Request: &PingRequest[uint64]{
-					Request: Request[uint64]{
+			msg := &JSONRPCRequest{
+				Request: &PingRequest{
+					Request: Request{
 						Method: PingRequestMethod,
 					},
 				},
+				ID:      NewRequestID(uint64(1)),
 				Version: JSONRPCVersion,
 			}
 			data, err := json.Marshal(msg)
@@ -271,7 +276,7 @@ func TestSSEClientTransport(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		client, err := NewSSEClientTransport[uint64](srv.URL)
+		client, err := NewSSEClientTransport(srv.URL)
 		if err != nil {
 			t.Fatalf("NewSSEClientTransport() error = %v", err)
 		}
@@ -286,9 +291,9 @@ func TestSSEClientTransport(t *testing.T) {
 			t.Fatalf("Receive() error = %v", err)
 		}
 
-		reqMsg, ok := msg.(*JSONRPCRequest[uint64])
+		reqMsg, ok := msg.(*JSONRPCRequest)
 		if !ok {
-			t.Errorf("received message type = %T, want *JSONRPCRequest[uint64]", msg)
+			t.Errorf("received message type = %T, want *JSONRPCRequest", msg)
 		}
 		if reqMsg.Version != JSONRPCVersion {
 			t.Errorf("received message version = %v, want %v", reqMsg.Version, JSONRPCVersion)

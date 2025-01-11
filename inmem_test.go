@@ -59,7 +59,10 @@ func TestInMemTransport_Send(t *testing.T) {
 	t.Run("successful send", func(t *testing.T) {
 		ctx := context.Background()
 		tr := InMemTransportMustStart(ctx, t)
-		msg := &JSONRPCRequest[uint64]{Version: JSONRPCVersion}
+		msg := &JSONRPCRequest{
+			ID:      NewRequestID(uint64(1)),
+			Version: JSONRPCVersion,
+		}
 		err := tr.Send(ctx, msg)
 		if err != nil {
 			t.Errorf("Send() error = %v", err)
@@ -100,7 +103,10 @@ func TestInMemTransport_Receive(t *testing.T) {
 	t.Run("successful receive", func(t *testing.T) {
 		ctx := context.Background()
 		tr := InMemTransportMustStart(ctx, t)
-		sent := &JSONRPCRequest[uint64]{Version: JSONRPCVersion}
+		sent := &JSONRPCRequest{
+			ID:      NewRequestID(uint64(1)),
+			Version: JSONRPCVersion,
+		}
 		go func() {
 			_ = tr.Send(context.Background(), sent)
 		}()
@@ -171,7 +177,10 @@ func TestInMemTransport_SendReceive(t *testing.T) {
 	t.Run("send receive with timeout", func(t *testing.T) {
 		ctx := context.Background()
 		tr := InMemTransportMustStart(ctx, t)
-		msg := &JSONRPCRequest[uint64]{Version: JSONRPCVersion}
+		msg := &JSONRPCRequest{
+			ID:      NewRequestID(uint64(1)),
+			Version: JSONRPCVersion,
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
@@ -205,7 +214,10 @@ func TestInMemTransport_SendReceive(t *testing.T) {
 
 		for range count {
 			go func() {
-				errCh <- tr.Send(ctx, &JSONRPCRequest[uint64]{})
+				errCh <- tr.Send(ctx, &JSONRPCRequest{
+					ID:      NewRequestID(uint64(1)),
+					Version: JSONRPCVersion,
+				})
 			}()
 			go func() {
 				_, err := tr.Receive(ctx)
