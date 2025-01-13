@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -397,13 +397,13 @@ func (p *Protocol) recvMsg() {
 					errors.Is(err, context.Canceled) {
 					// Transport closed or context cancelled - clean shutdown
 					if cErr := p.Close(context.Background()); cErr != nil {
-						log.Printf("close protocol: %v", cErr)
+						fmt.Fprintf(os.Stderr, "failed to close protocol: %v", cErr)
 					}
 					return
 				}
 				// TODO: maybe we should just shut down completely, too
 				// Other errors might be temporary - log and continue
-				log.Printf("receive error: %v", err)
+				fmt.Fprintf(os.Stderr, "failed to receive error: %v", err)
 				continue
 			}
 			go p.handleMessage(msg)
@@ -419,7 +419,7 @@ func (p *Protocol) handleMessage(msg JSONRPCMessage) {
 	case JSONRPCRequestMsgType:
 		req, ok := msg.(*JSONRPCRequest)
 		if !ok {
-			log.Printf("invalid request message type: %T", msg)
+			fmt.Fprintf(os.Stderr, "invalid request message type: %T", msg)
 			return
 		}
 		p.handleRequest(ctx, req)
@@ -427,7 +427,7 @@ func (p *Protocol) handleMessage(msg JSONRPCMessage) {
 	case JSONRPCNotificationMsgType:
 		notif, ok := msg.(*JSONRPCNotification)
 		if !ok {
-			log.Printf("invalid notification message type: %T", msg)
+			fmt.Fprintf(os.Stderr, "invalid notification message type: %T", msg)
 			return
 		}
 		p.handleNotification(ctx, notif)
@@ -435,7 +435,7 @@ func (p *Protocol) handleMessage(msg JSONRPCMessage) {
 	case JSONRPCResponseMsgType:
 		resp, ok := msg.(*JSONRPCResponse)
 		if !ok {
-			log.Printf("invalid response message type: %T", msg)
+			fmt.Fprintf(os.Stderr, "invalid response message type: %T", msg)
 			return
 		}
 		p.handleResponse(ctx, resp)
@@ -443,7 +443,7 @@ func (p *Protocol) handleMessage(msg JSONRPCMessage) {
 	case JSONRPCErrorMsgType:
 		errMsg, ok := msg.(*JSONRPCError)
 		if !ok {
-			log.Printf("invalid error message type: %T", msg)
+			fmt.Fprintf(os.Stderr, "invalid error message type: %T", msg)
 			return
 		}
 		p.handleError(ctx, errMsg)
@@ -487,7 +487,7 @@ func (p *Protocol) handleNotification(ctx context.Context, n *JSONRPCNotificatio
 
 	if ok {
 		if err := handler(ctx, n); err != nil {
-			log.Printf("notification handler error: %v", err)
+			fmt.Fprintf(os.Stderr, "notification handler error: %v", err)
 		}
 	}
 }
@@ -507,7 +507,7 @@ func (p *Protocol) handleRequest(ctx context.Context, req *JSONRPCRequest) {
 			},
 		}
 		if err := p.transport.Send(ctx, errResp); err != nil {
-			log.Printf("send missing handler error: %v", err)
+			fmt.Fprintf(os.Stderr, "send missing handler error: %v", err)
 		}
 		return
 	}
@@ -527,7 +527,7 @@ func (p *Protocol) handleRequest(ctx context.Context, req *JSONRPCRequest) {
 			ctx = context.Background()
 		}
 		if err := p.transport.Send(ctx, errResp); err != nil {
-			log.Printf("send handler error: %v", err)
+			fmt.Fprintf(os.Stderr, "send handler error: %v", err)
 		}
 		return
 	}
@@ -538,6 +538,6 @@ func (p *Protocol) handleRequest(ctx context.Context, req *JSONRPCRequest) {
 		Result:  resp.Result,
 	}
 	if err := p.transport.Send(ctx, out); err != nil {
-		log.Printf("send response error: %v", err)
+		fmt.Fprintf(os.Stderr, "send response error: %v", err)
 	}
 }
